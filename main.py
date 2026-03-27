@@ -1,26 +1,59 @@
+"""Testing the library."""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath("src"))
+
 from pyprobe import pin
-import ctypes
 
-# Look at a float (24 bytes, data at 16)
-pin(3.14).examine()
 
-# Look at an int (28 bytes, data at 24)
-pin(100).examine()
+def showcase():
+    """Demonstrate the power of the PyProbe Memory Interpreter."""
+    print("="*60)
+    print(
+        "PyProbe Memory Interpreter: Industrial Runtime Inspection".center(60)
+    )
+    print("="*60)
 
-# Look at a small string (Watch how ob_size and data look)
-pin("Hi").examine()
+    # 1. Primitives & Strings (Multi-encoding)
+    print("\n[ STEP 1: Diverse Primitives ]")
+    p1 = 2**100   # Large Int
+    p2 = 3.14159  # Float
+    p3 = "🙂🐍🔥"  # UCS-4 String
+    p4 = b"binary\x00data"  # Bytes
+    for item in [p1, p2, p3, p4]:
+        pin(item).examine()
 
-x = [10, 20, 30]
-pin(x).examine()
+    # 2. Collections (Graph Inspection)
+    print("\n[ STEP 2: Collection Geometries ]")
+    # A combined general dictionary
+    d = {i: str(i) for i in range(5)}
+    del d[2]  # Introduce a tombstone
+    pin(d).examine()
 
-y = {1:"A",2:"B",3:"C"}
-p = pin(y)
+    # 3. Custom Objects (__dict__ logic)
+    print("\n[ STEP 3: Object Internals ]")
 
-# Dump the Dict object header itself
-p.dump_raw(p.address, length=48, label="DICT_HEADER")
+    class UserProfile:
+        def __init__(self, name, age):
+            self.name = name
+            self.age = age
+            self.preferences = {"theme": "dark", "notifications": True}
 
-# Dump the Key-Object allocation (The indices and entries)
-keys_addr = ctypes.cast(p.lens.ma_keys, ctypes.c_void_p).value
-p.dump_raw(keys_addr, length=128, label="KEYS_ALLOC")
+    user = UserProfile("Alice", 30)
+    pin(user.__dict__).examine()
 
-p.examine()
+    # 4. Recursion & Self-Reference
+    print("\n[ STEP 4: Cycle Detection ]")
+    recursive_list = [1, 2]
+    recursive_list.append(recursive_list)
+    pin(recursive_list).examine()
+
+    print("\n" + "="*60)
+    print("Inspection Complete.".center(60))
+    print("="*60)
+
+
+if __name__ == "__main__":
+    showcase()
