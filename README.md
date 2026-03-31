@@ -230,7 +230,7 @@ We welcome contributions! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for:
 
 ## License
 
-[TBD - likely MIT or Apache 2.0]
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
@@ -243,4 +243,5 @@ We welcome contributions! See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for:
 
 ## Contact
 
-[TBD - add contact info, issue tracker, etc.]
+- **Issues**: [GitHub Issues](../../issues)
+- **Discussions**: [GitHub Discussions](../../discussions)
