@@ -5,3 +5,5 @@ dist/
 *.egg-info/
 .env
 
+*.so
+.DS_Store
