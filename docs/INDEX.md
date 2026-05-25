@@ -96,6 +96,30 @@ This question drives everything we do.
 
 ---
 
+
+---
+
+## Troubleshooting & Known Issues
+
+### Split Dicts and "Bad Address" Errors
+
+PyProbe aims to support a wide range of Python object layouts, but some advanced or version-specific features (such as split dictionaries in custom classes) may not be fully supported in all Python versions.
+
+**If you see output like:**
+
+	▶ Slot N | Key: ... | Val: <<Bad Address 0xXXXXXXXX> @ 0xXXXXXXXX>
+
+This means PyProbe could not correctly resolve the memory address for that value. This is most often seen with split dictionaries (a CPython optimization for object attribute storage).
+
+**What to do:**
+
+- Check if your Python version uses split dicts for custom objects (CPython 3.6+).
+- Be aware that this is a known limitation; support is in progress.
+- If you encounter this, please report your Python version and the object type to help us improve compatibility.
+- For research or critical debugging, cross-check with the [CPYTHON_MEMORY](./CPYTHON_MEMORY.md) reference and consider using combined dicts or simpler object layouts.
+
+We are actively working to improve support for all dict layouts. See the [ROADMAP](./ROADMAP.md) for progress.
+
 ## Document Status
 
 | Document | Status | Last Updated |

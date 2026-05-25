@@ -3,7 +3,8 @@
 ## High Priority
 
 ### Pending
-(none)
+- [ ] Improve support for split dictionaries (custom class __dict__ in CPython 3.6+)
+- [ ] Add better error handling and user guidance for "Bad Address" errors in dict inspection
 
 ## Medium Priority
 
@@ -92,11 +93,16 @@
 | reversed | ❌ | |
 | collections.* | ❌ | |
 | datetime.* | ❌ | |
-| Custom instances | ❌ | Managed dicts issue |
+| Custom instances | ⚠️ | Split/managed dicts: partial support, see Contributor Troubleshooting Note below |
 
 ---
 
 ## Memory Layouts Reference
+---
+
+## Contributor Troubleshooting Note
+
+If you encounter output like `<<Bad Address 0xXXXXXXXX> @ 0xXXXXXXXX>` when inspecting dicts (especially for custom class instances), this is a known limitation with split/managed dicts in recent CPython versions. See docs/INDEX.md for user-facing guidance. Improving this is a current priority.
 
 ```
 Exception (BaseException):
