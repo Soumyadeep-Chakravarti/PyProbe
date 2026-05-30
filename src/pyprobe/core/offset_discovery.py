@@ -1,5 +1,6 @@
 import ctypes
 import os
+from typing import Dict, List, Optional, Tuple
 
 
 def is_readable_ptr(ptr) -> bool:
@@ -29,31 +30,54 @@ def is_readable_ptr(ptr) -> bool:
         return False
 
 
-def _discover_offset(obj, known_values: list) -> int:
+def _find_pattern_in_memory(
+    base_addr: int,
+    pattern: List[int],
+    start_offset: int = 0,
+    end_offset: int = 200,
+    step: int = 8
+) -> Optional[int]:
     """
-    Dynamically discover the offset of fields in any Python object
-    by scanning raw RAM bytes.
-    No hardcoding, no version checks.
+    Search memory starting at base_addr for a sequence of values in pattern.
+    Each value is expected at base_addr + offset + i*step.
+    Returns the offset where the pattern starts, or None if not found.
     """
-    obj_addr = id(obj)
-    expected = [id(v) for v in known_values]
-
-    for offset in range(16, 128, 8):
+    for offset in range(start_offset, end_offset, step):
         match = True
-        for i, expected_addr in enumerate(expected):
-            ptr = ctypes.c_void_p.from_address(
-                obj_addr + offset + (i * 8)
-            ).value
-            if ptr != expected_addr:
+        for i, expected_val in enumerate(pattern):
+            addr = base_addr + offset + (i * step)
+            try:
+                val = ctypes.c_void_p.from_address(addr).value
+                if val != expected_val:
+                    match = False
+                    break
+            except Exception:
                 match = False
                 break
-
         if match:
             return offset
+    return None
 
-    raise RuntimeError(
-        f"Could not discover offset for {type(obj).__name__}"
+
+def _discover_offset(
+    obj_addr: int,
+    known_values: List[int],
+    start_offset: int = 16,
+    end_offset: int = 128,
+    step: int = 8
+) -> int:
+    """
+    Dynamically discover the offset of fields in any Python object
+    by scanning raw RAM bytes for a sequence of known values.
+    """
+    offset = _find_pattern_in_memory(
+        obj_addr, known_values, start_offset, end_offset, step
     )
+    if offset is None:
+        raise RuntimeError(
+            f"Could not discover offset for {hex(obj_addr)}"
+        )
+    return offset
 
 
 def _discover_tuple_items_offset() -> int:
@@ -63,7 +87,9 @@ def _discover_tuple_items_offset() -> int:
     """
     s1, s2, s3 = 1000001, 1000002, 1000003
     tup = (s1, s2, s3)
-    return _discover_offset(tup, [s1, s2, s3])
+    obj_addr = id(tup)
+    expected = [id(s1), id(s2), id(s3)]
+    return _discover_offset(obj_addr, expected)
 
 
 def _discover_list_items_offset() -> int:
@@ -74,27 +100,21 @@ def _discover_list_items_offset() -> int:
     """
     s1, s2, s3 = 2000001, 2000002, 2000003
     lst = [s1, s2, s3]
-
     lst_addr = id(lst)
-    expected = [id(s1), id(s2), id(s3)]
+    expected_item_ids = [id(s1), id(s2), id(s3)]
 
-    for offset in range(16, 64, 8):
-        ob_item_ptr = ctypes.c_void_p.from_address(
-            lst_addr + offset
-        ).value
-
-        if not is_readable_ptr(ob_item_ptr):
+    # First, find a pointer within the list struct that points to readable memory
+    for ptr_offset in range(16, 64, 8):
+        ptr_val = ctypes.c_void_p.from_address(lst_addr + ptr_offset).value
+        if not is_readable_ptr(ptr_val):
             continue
 
-        try:
-            p0 = ctypes.c_void_p.from_address(ob_item_ptr).value
-            p1 = ctypes.c_void_p.from_address(ob_item_ptr + 8).value
-            p2 = ctypes.c_void_p.from_address(ob_item_ptr + 16).value
-
-            if p0 == expected[0] and p1 == expected[1] and p2 == expected[2]:
-                return offset
-        except Exception:
-            continue
+        # Check if the memory pointed to contains our expected item IDs
+        item_offset = _find_pattern_in_memory(
+            ptr_val, expected_item_ids, start_offset=0, end_offset=100, step=8
+        )
+        if item_offset is not None:
+            return ptr_offset
 
     raise RuntimeError("Could not discover list items offset!")
 
@@ -107,22 +127,18 @@ def _discover_set_items_offset() -> int:
     """
     s1 = 3000001
     st = {s1}
-
     st_addr = id(st)
     expected_addr = id(s1)
 
     for offset in range(16, 128, 8):
-        ptr = ctypes.c_void_p.from_address(
-            st_addr + offset
-        ).value
-
+        ptr = ctypes.c_void_p.from_address(st_addr + offset).value
         if ptr == expected_addr:
             return offset
 
     raise RuntimeError("Could not discover set items offset!")
 
 
-def _discover_dict_entry_layout() -> dict:
+def _discover_dict_entry_layout() -> Dict[str, Optional[int]]:
     """
     Discover dict internal layout from RAM bytes.
     No hardcoding, no version checks.
@@ -130,59 +146,37 @@ def _discover_dict_entry_layout() -> dict:
     v1 = 4000001
     v2 = 4000002
     d = {"key1": v1, "key2": v2}
-
     d_addr = id(d)
     expected_v1 = id(v1)
     expected_v2 = id(v2)
 
-    ma_keys_ptr = None
-    ma_keys_offset = None
-    v1_offset_in_keys = None
+    ma_keys_ptr: Optional[int] = None
+    ma_keys_offset: Optional[int] = None
+    v1_offset_in_keys: Optional[int] = None
 
     # Step 1: Find ma_keys pointer in dict struct
     for offset in range(16, 64, 8):
         ptr = ctypes.c_void_p.from_address(d_addr + offset).value
-
         if not is_readable_ptr(ptr):
             continue
 
         # Try to find v1 inside this pointer
-        for inner in range(0, 200, 8):
-            try:
-                if not is_readable_ptr(ptr + inner):
-                    continue
-                val = ctypes.c_void_p.from_address(
-                    ptr + inner
-                ).value
-                if val == expected_v1:
-                    ma_keys_ptr = ptr
-                    ma_keys_offset = offset
-                    v1_offset_in_keys = inner
-                    break
-            except Exception:
-                continue
-
-        if ma_keys_ptr is not None:
+        v1_offset = _find_pattern_in_memory(
+            ptr, [expected_v1], start_offset=0, end_offset=200, step=8
+        )
+        if v1_offset is not None:
+            ma_keys_ptr = ptr
+            ma_keys_offset = offset
+            v1_offset_in_keys = v1_offset
             break
 
     if ma_keys_ptr is None or v1_offset_in_keys is None:
         raise RuntimeError("Could not find ma_keys or v1!")
 
     # Step 2: Find v2 offset inside ma_keys
-    v2_offset_in_keys = None
-    for inner in range(0, 200, 8):
-        try:
-            if not is_readable_ptr(ma_keys_ptr + inner):
-                continue
-            val = ctypes.c_void_p.from_address(
-                ma_keys_ptr + inner
-            ).value
-            if val == expected_v2:
-                v2_offset_in_keys = inner
-                break
-        except Exception:
-            continue
-
+    v2_offset_in_keys = _find_pattern_in_memory(
+        ma_keys_ptr, [expected_v2], start_offset=0, end_offset=200, step=8
+    )
     if v2_offset_in_keys is None:
         raise RuntimeError("Could not find v2 in ma_keys!")
 
