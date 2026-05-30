@@ -1,15 +1,15 @@
 import ctypes
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 
-def is_readable_ptr(ptr) -> bool:
+def is_readable_ptr(ptr: int) -> bool:
     """
     Check if pointer is readable without causing a hard OS-level crash.
     """
     # 1. Filter out obvious non-pointers (like small integers such as ob_size=3).
     # Any address below 64KB (0x10000) is universally unmapped in modern OSs.
-    if not isinstance(ptr, int) or ptr < 0x10000:
+    if ptr < 0x10000:
         return False
 
     # 2. On Windows, dereferencing invalid high memory STILL causes an Access 
@@ -106,7 +106,7 @@ def _discover_list_items_offset() -> int:
     # First, find a pointer within the list struct that points to readable memory
     for ptr_offset in range(16, 64, 8):
         ptr_val = ctypes.c_void_p.from_address(lst_addr + ptr_offset).value
-        if not is_readable_ptr(ptr_val):
+        if ptr_val is None or not is_readable_ptr(ptr_val):  # Add this guard
             continue
 
         # Check if the memory pointed to contains our expected item IDs
@@ -157,7 +157,7 @@ def _discover_dict_entry_layout() -> Dict[str, Optional[int]]:
     # Step 1: Find ma_keys pointer in dict struct
     for offset in range(16, 64, 8):
         ptr = ctypes.c_void_p.from_address(d_addr + offset).value
-        if not is_readable_ptr(ptr):
+        if ptr is None or not is_readable_ptr(ptr):
             continue
 
         # Try to find v1 inside this pointer
@@ -189,7 +189,7 @@ def _discover_dict_entry_layout() -> Dict[str, Optional[int]]:
     }
 
 
-def _fmt_offset(val):
+def _fmt_offset(val: Optional[int]) -> str:
     return f"+{val}" if val is not None else "None"
 
 
@@ -211,11 +211,14 @@ print(f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
 
 print("Testing dict...")
 try:
-    DICT_LAYOUT = _discover_dict_entry_layout()
-    print(f"Dict OK: {DICT_LAYOUT}")
+    dict_layout = _discover_dict_entry_layout()
+    print(f"Dict OK: {dict_layout}")
 except Exception as e:
     print(f"Dict FAILED: {e}")
-    DICT_LAYOUT = None
+    dict_layout = None
+
+# Assign to the constant exactly once at the very end
+DICT_LAYOUT = dict_layout
 
 # ──────────────────────────────────────────────────────
 # Convenience variables

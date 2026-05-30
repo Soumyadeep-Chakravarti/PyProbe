@@ -2,6 +2,7 @@ import sys
 import os
 import ctypes
 import ast
+from typing import Any
 
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
@@ -9,7 +10,7 @@ from pyprobe.core.pointer.engine import Pointer
 
 
 # Safe built-in functions allowed in REPL evaluation
-_SAFE_BUILTINS = {
+_SAFE_BUILTINS: dict[str, Any] = {
     "True": True,
     "False": False,
     "None": None,
@@ -37,7 +38,23 @@ _SAFE_BUILTINS = {
 }
 
 
-def safe_eval(expr: str, context: dict):
+def safe_eval(expr: str, context: dict[str, Any]) -> Any:
+    """Safely evaluate a Python expression.
+
+    Only allows literal values and safe built-in operations.
+    Does NOT allow arbitrary code execution, imports, or attribute access
+    to potentially dangerous objects.
+
+    Args:
+        expr: The expression string to evaluate.
+        context: A dictionary of variable names available in evaluation.
+
+    Returns:
+        The evaluated result.
+
+    Raises:
+        ValueError: If the expression contains unsafe operations.
+    """
     """Safely evaluate a Python expression.
 
     Only allows literal values and safe built-in operations.
@@ -92,7 +109,7 @@ def safe_eval(expr: str, context: dict):
     return eval(compile(tree, "<repl>", "eval"), safe_globals, context)
 
 
-def help_msg():
+def help_msg() -> None:
     print("""
     PyProbe: Live Memory REPL
     commands:
@@ -103,7 +120,7 @@ def help_msg():
     """)
 
 
-def repl():
+def repl() -> None:
     print("=" * 60)
     print("Welcome to PyProbe Live Memory Explorer".center(60))
     print("=" * 60)
