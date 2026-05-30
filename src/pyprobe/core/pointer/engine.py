@@ -183,6 +183,49 @@ class Pointer:
 
         self.lens = self._get_lens()
 
+    def _extract_instance(
+        self,
+        addr: int,
+        type_name: str,
+        type_ptr: int,
+        visited: Optional[set] = None,
+        depth: int = 0,
+    ) -> Any:
+        result = {"__type__": type_name}
+
+        # Basic filter to avoid deep built-in types if needed
+        if type_name in ("type", "module"):
+            return result
+
+        try:
+            # Validate that type_ptr is actually a type object to prevent garbage pointer segfaults
+            type_header = PyObjectHeader.from_address(type_ptr)
+            if type_header.ob_type_ptr != id(type):
+                return result
+
+            # Safely check if it's a heap type with a managed dict (3.12+)
+            tp_flags = ctypes.c_uint64.from_address(type_ptr + 168).value
+            if (tp_flags & (1 << 4)) and (tp_flags & (1 << 9)):
+                dict_ptr = ctypes.c_void_p.from_address(addr - 24).value
+
+                # Verify dict_ptr is actually a dictionary to avoid garbage pointer segfaults
+                if dict_ptr and dict_ptr > 0x1000 and (dict_ptr & 0x7) == 0:
+                    dict_header = PyObjectHeader.from_address(dict_ptr)
+                    if dict_header.ob_type_ptr == id(dict):
+                        extracted_dict = self.pull_data_from_address(
+                            dict_ptr, visited, depth + 1
+                        )
+                        if isinstance(extracted_dict, dict):
+                            result["__dict__"] = extracted_dict
+                    else:
+                        inline_ptr = ctypes.c_void_p.from_address(addr - 16).value
+                        if inline_ptr and inline_ptr > 0x1000:
+                            result["__dict__"] = "<Inline Values (Unmaterialized)>"
+        except Exception:
+            pass
+
+        return result
+
     def _extract_dict(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -1021,7 +1064,9 @@ class Pointer:
             return f"<Max Depth @ {hex(actual_addr)}>"
 
         try:
-            _, type_name = self._get_type_info(actual_addr)
+            header, type_name = self._get_type_info(actual_addr)
+            if not header:
+                return type_name
 
             # Track containers in visited to avoid cycles
             # Types that recurse and may contain references
@@ -1058,7 +1103,10 @@ class Pointer:
                     return extractor(actual_addr, visited, depth)
                 return extractor(actual_addr)
 
-            return f"<{type_name} @ {hex(actual_addr)}>"
+            # Fallback: attempt to extract as a generic custom instance
+            return self._extract_instance(
+                actual_addr, type_name, header.ob_type_ptr, visited, depth
+            )
         except Exception as e:
             return f"<Error reading {hex(actual_addr)}: {e}>"
 
