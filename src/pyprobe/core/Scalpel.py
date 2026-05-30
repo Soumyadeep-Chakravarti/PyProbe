@@ -1,0 +1,310 @@
+"""
+PyProbe Scalpel Module
+======================
+Phase 2: Controlled memory mutation with strict safety guarantees.
+Dynamically maps memory layouts to survive CPython version changes.
+Includes CPython 3.12+ PyLongObject bitfield fixes.
+"""
+
+import ctypes
+import os
+import gc
+import sys
+from contextlib import contextmanager
+from typing import Tuple, Any
+
+# ── Import from Phase 1 ────────────────────────────────────────────────────
+from pyprobe.core.offset_discovery import (
+    LIST_ITEMS_OFFSET,
+    DICT_LAYOUT,
+)
+
+# ── Constants ──────────────────────────────────────────────────────────────
+IMMORTAL_REFCOUNT_THRESHOLD = 1 << 30
+SMALL_INT_MIN = -5
+SMALL_INT_MAX = 256
+
+# Base-2^30 math for CPython 64-bit integers
+SHIFT = 30
+MASK  = (1 << SHIFT) - 1
+
+
+# ── GC Control & Safety ────────────────────────────────────────────────────
+
+def _get_refcount(addr: int) -> int:
+    """Read actual refcount directly from RAM."""
+    return ctypes.c_ssize_t.from_address(addr).value
+
+
+@contextmanager
+def gc_suspended():
+    """Temporarily disable GC during mutation."""
+    was_enabled = gc.isenabled()
+    if was_enabled:
+        gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
+def is_safe_to_mutate(obj: Any, stack_depth: int = 3) -> Tuple[bool, str]:
+    """
+    Master safety check before ANY memory mutation.
+
+    Checks (in order):
+        1. Immortal objects     (None, True, False)    → NEVER
+        2. Cached integers      (-5 to 256)            → NEVER
+        3. Interned strings     (identifiers, len <= 1) → NEVER
+        4. Type objects         (int, str, list...)    → NEVER
+        5. Shared objects       (refcount too high)    → NEVER
+
+    Returns:
+        (True,  "Safe")    → mutation allowed
+        (False, "reason")  → mutation blocked
+    """
+    addr     = id(obj)
+    refcount = _get_refcount(addr)
+
+    # Rule 1: Immortal
+    if refcount > IMMORTAL_REFCOUNT_THRESHOLD:
+        return False, "Object is immortal"
+
+    # Rule 2: Cached integer
+    if isinstance(obj, int) and SMALL_INT_MIN <= obj <= SMALL_INT_MAX:
+        return False, "Small int cache"
+
+    # Rule 3: Interned string
+    if isinstance(obj, str) and (len(obj) <= 1 or obj.isidentifier()):
+        return False, "Likely interned string"
+
+    # Rule 4: Type object
+    if isinstance(obj, type):
+        return False, "Type object"
+
+    # Rule 5: Shared object
+    expected_refs = 1 + stack_depth
+    if refcount > expected_refs:
+        return False, f"Shared object (refs: {refcount}, expected {expected_refs})"
+
+    # GC threshold check — collect if needed before mutation
+    if gc.isenabled() and gc.get_threshold()[0] > 0:
+        if gc.get_count()[0] > gc.get_threshold()[0]:
+            gc.collect()
+
+    return True, "Safe"
+
+
+def assert_safe(obj: Any, stack_depth: int = 3) -> None:
+    """
+    Raise ValueError if object is not safe to mutate.
+    Use at the start of every mutation function.
+    """
+    safe, reason = is_safe_to_mutate(obj, stack_depth)
+    if not safe:
+        raise ValueError(f"Unsafe: {reason}")
+
+
+# ── Mutators ───────────────────────────────────────────────────────────────
+
+def mutate_float(target_float: float, new_value: float) -> None:
+    """
+    Overwrite the underlying C double of a Python float.
+
+    Layout:
+        +0  refcount
+        +8  type pointer
+        +16 ob_fval (IEEE 754 double) ← we write here
+    """
+    assert_safe(target_float, stack_depth=5)
+
+    addr       = id(target_float)
+    double_ptr = ctypes.c_double.from_address(addr + 16)
+
+    with gc_suspended():
+        double_ptr.value = new_value
+
+
+def mutate_int(target_int: int, new_value: int) -> None:
+    """
+    Mutate a target integer in-place.
+    Handles CPython 3.12+ lv_tag bitfield encoding.
+
+    Constraint:
+        new_value must fit in same number of digits as target_int.
+        Cannot grow the integer — would require reallocation.
+
+    Layout (3.12+):
+        +0  refcount
+        +8  type pointer
+        +16 lv_tag (size << 3 | sign)
+        +24 digit array (uint32[])
+    """
+    assert_safe(target_int, stack_depth=5)
+    if target_int == new_value:
+        return
+
+    addr        = id(target_int)
+    ob_size_ptr = ctypes.c_ssize_t.from_address(addr + 16)
+
+    # Decode current capacity
+    if sys.version_info >= (3, 12):
+        current_capacity = ob_size_ptr.value >> 3
+    else:
+        current_capacity = abs(ob_size_ptr.value)
+
+    # Calculate digits needed for new value
+    new_digits = []
+    temp = abs(new_value)
+    while temp > 0:
+        new_digits.append(temp & MASK)
+        temp >>= SHIFT
+
+    required_capacity = len(new_digits)
+
+    if required_capacity > current_capacity:
+        raise MemoryError(
+            f"Overflow prevented: target capacity is {current_capacity} digits, "
+            f"but {new_value} requires {required_capacity}."
+        )
+
+    # Encode new size/tag
+    if sys.version_info >= (3, 12):
+        if new_value == 0:
+            new_ob_size = 0
+        else:
+            sign_bit    = 1 if new_value > 0 else 2
+            new_ob_size = (required_capacity << 3) | sign_bit
+    else:
+        if new_value == 0:
+            new_ob_size = 0
+        elif new_value > 0:
+            new_ob_size = required_capacity
+        else:
+            new_ob_size = -required_capacity
+
+    with gc_suspended():
+        ob_size_ptr.value = new_ob_size
+        if required_capacity != 0:
+            ArrayType   = ctypes.c_uint32 * required_capacity
+            digit_array = ArrayType.from_address(addr + 24)
+            for i, digit in enumerate(new_digits):
+                digit_array[i] = digit
+
+
+def safe_list_swap(target_list: list, index: int, new_obj: Any) -> None:
+    """
+    Replace a list item by hot-swapping the memory pointer.
+
+    Steps:
+        1. Find ob_item pointer (discovered dynamically)
+        2. INCREF new object
+        3. Swap pointer
+        4. DECREF old object
+
+    Layout:
+        list_addr + LIST_ITEMS_OFFSET → ob_item pointer
+        ob_item + (index * 8)         → slot to swap
+    """
+    assert_safe(target_list, stack_depth=5)
+    if index < 0 or index >= len(target_list):
+        raise IndexError("List index out of range")
+
+    list_addr    = id(target_list)
+    new_obj_addr = id(new_obj)
+
+    ob_item_ptr      = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
+    target_slot_addr = ob_item_ptr + (index * 8)
+
+    with gc_suspended():
+        old_obj_ptr = ctypes.c_void_p.from_address(target_slot_addr).value
+        ctypes.c_ssize_t.from_address(new_obj_addr).value += 1               # INCREF new
+        ctypes.c_void_p.from_address(target_slot_addr).value = new_obj_addr  # SWAP
+        if old_obj_ptr:
+            ctypes.c_ssize_t.from_address(old_obj_ptr).value -= 1            # DECREF old
+
+
+def safe_dict_value_swap(target_dict: dict, key: Any, new_value: Any) -> None:
+    """
+    Find value pointer for a dict key and hot-swap it.
+
+    Steps:
+        1. Get ma_keys pointer (discovered dynamically)
+        2. Scan for old value's address
+        3. INCREF new value
+        4. Swap pointer
+        5. DECREF old value
+
+    Layout:
+        dict_addr + ma_keys_offset → ma_keys pointer
+        scan ma_keys for old_val_id → target slot
+    """
+    assert_safe(target_dict, stack_depth=5)
+    if key not in target_dict:
+        raise KeyError(f"Key '{key}' not found.")
+
+    d_addr       = id(target_dict)
+    new_obj_addr = id(new_value)
+    old_val_id   = id(target_dict[key])
+
+    ma_keys_ptr = ctypes.c_void_p.from_address(
+        d_addr + DICT_LAYOUT["ma_keys_offset"]
+    ).value
+
+    # Scan for old value pointer
+    scan_limit       = len(target_dict) * DICT_LAYOUT["entry_size"] * 4
+    target_slot_addr = None
+
+    for offset in range(0, scan_limit, 8):
+        try:
+            ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
+            if ptr == old_val_id:
+                target_slot_addr = ma_keys_ptr + offset
+                break
+        except Exception:
+            pass
+
+    if not target_slot_addr:
+        raise RuntimeError("Could not locate value pointer in memory.")
+
+    with gc_suspended():
+        ctypes.c_ssize_t.from_address(new_obj_addr).value += 1               # INCREF new
+        ctypes.c_void_p.from_address(target_slot_addr).value = new_obj_addr  # SWAP
+        ctypes.c_ssize_t.from_address(old_val_id).value -= 1                 # DECREF old
+
+
+# ── Tests ──────────────────────────────────────────────────────────────────
+
+def run_tests():
+    print("=" * 50)
+    print("PyProbe Scalpel: Phase 2 Mutation Tests")
+    print("=" * 50)
+
+    # Float
+    f = float("100." + "5")
+    print(f"\n[Float] Before: {f}")
+    mutate_float(f, 999.99)
+    print(f"[Float] After : {f}")
+
+    # Int
+    big_int = int("1" + "0" * 18)
+    print(f"\n[Int] Before: {big_int}")
+    mutate_int(big_int, 42)
+    print(f"[Int] After : {big_int}")
+
+    # List
+    lst = list((10, 20, 30))
+    print(f"\n[List] Before: {lst}")
+    safe_list_swap(lst, 1, "MUTATED")
+    print(f"[List] After : {lst}")
+
+    # Dict
+    d = dict(status="secure", version=1)
+    print(f"\n[Dict] Before: {d}")
+    safe_dict_value_swap(d, "status", "mutated")
+    print(f"[Dict] After : {d}")
+
+
+if __name__ == "__main__":
+    run_tests()
