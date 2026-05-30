@@ -3,7 +3,7 @@
 import ctypes
 import sys
 import warnings
-from typing import Any, Dict, Optional, Tuple, Type, Union
+from typing import Any, ClassVar, Dict, Optional, Set, Tuple, Type, Union
 
 from pyprobe.raw.headers.py_object import PyObjectHeader
 from pyprobe.raw.headers.py_type import PyTypeObject
@@ -74,6 +74,17 @@ _TYPE_NAME_CACHE: Dict[int, str] = {}
 _UNSET = object()
 
 
+def extracts(*type_names: str, is_container: bool = False):
+    """Decorator: register a Pointer method as an extractor for given type names."""
+
+    def decorator(method):
+        method._extracts_for = type_names
+        method._extracts_container = is_container
+        return method
+
+    return decorator
+
+
 class Pointer:
     """Memory introspection pointer for CPython objects.
 
@@ -87,6 +98,10 @@ class Pointer:
         header: The PyObjectHeader structure at the address.
         lens: A type-specific lens view of the object body (if available).
     """
+
+    _extractors_registry: ClassVar[Dict[str, callable]] = {}
+    _container_types: ClassVar[Set[str]] = set()
+    _registries_populated: ClassVar[bool] = False
 
     def __init__(self, target: Any = _UNSET, *, address: Optional[int] = None) -> None:
         """Initialize a Pointer to a Python object.
@@ -119,69 +134,29 @@ class Pointer:
         self.header_size = 16
         self.data_addr: int = self.address + self.header_size
 
-        # Dispatcher for data extraction
+        # Build the extractor registry from decorated methods
+        type(self)._populate_registries()
         self._extractors = {
-            "int": self._extract_int,
-            "float": self._extract_float,
-            "complex": self._extract_complex,
-            "str": self._extract_string,
-            "tuple": self._extract_tuple,
-            "list": self._extract_list,
-            "dict": self._extract_dict,
-            "bytes": self._extract_bytes,
-            "bytearray": self._extract_bytearray,
-            "memoryview": self._extract_memoryview,
-            "set": self._extract_set,
-            "frozenset": self._extract_set,
-            "bool": self._extract_bool,
-            "NoneType": self._extract_none,
-            "range": self._extract_range,
-            "slice": self._extract_slice,
-            "function": self._extract_function,
-            # New extractors
-            "type": self._extract_type,
-            "module": self._extract_module,
-            "code": self._extract_code,
-            "cell": self._extract_cell,
-            "property": self._extract_property,
-            "staticmethod": self._extract_staticmethod,
-            "classmethod": self._extract_classmethod,
-            "builtin_function_or_method": self._extract_builtin_function,
-            "generator": self._extract_generator,
-            "enumerate": self._extract_enumerate,
-            # Exception types - map common ones to exception extractor
-            "BaseException": self._extract_exception,
-            "Exception": self._extract_exception,
-            "ValueError": self._extract_exception,
-            "TypeError": self._extract_exception,
-            "KeyError": self._extract_exception,
-            "IndexError": self._extract_exception,
-            "AttributeError": self._extract_exception,
-            "RuntimeError": self._extract_exception,
-            "StopIteration": self._extract_exception,
-            "OSError": self._extract_exception,
-            "ImportError": self._extract_exception,
-            "NameError": self._extract_exception,
-            "ZeroDivisionError": self._extract_exception,
-            # OSError subclasses
-            "FileNotFoundError": self._extract_exception,
-            "FileExistsError": self._extract_exception,
-            "PermissionError": self._extract_exception,
-            "IsADirectoryError": self._extract_exception,
-            "NotADirectoryError": self._extract_exception,
-            "TimeoutError": self._extract_exception,
-            "ConnectionError": self._extract_exception,
-            "BrokenPipeError": self._extract_exception,
-            # Other common exceptions
-            "AssertionError": self._extract_exception,
-            "LookupError": self._extract_exception,
-            "SyntaxError": self._extract_exception,
-            "ModuleNotFoundError": self._extract_exception,
-            "UnboundLocalError": self._extract_exception,
-            "RecursionError": self._extract_exception,
+            tname: meth.__get__(self, type(self))
+            for tname, meth in type(self)._extractors_registry.items()
         }
 
         self.lens = self._get_lens()
+
+    @classmethod
+    def _populate_registries(cls) -> None:
+        if cls._registries_populated:
+            return
+        cls._extractors_registry = {}
+        cls._container_types = set()
+        for attr in cls.__dict__.values():
+            type_names = getattr(attr, "_extracts_for", None)
+            if type_names:
+                for tname in type_names:
+                    cls._extractors_registry[tname] = attr
+                if attr._extracts_container:
+                    cls._container_types.update(type_names)
+        cls._registries_populated = True
 
     def _extract_instance(
         self,
@@ -226,6 +201,7 @@ class Pointer:
 
         return result
 
+    @extracts("dict", is_container=True)
     def _extract_dict(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -331,6 +307,7 @@ class Pointer:
         except Exception:
             return None, f"<Read Error {hex(addr)}>"
 
+    @extracts("int")
     def _extract_int(self, addr: int) -> int:
         """Extract integer value (PyLongObject)."""
         # lv_tag is at offset 16 in 3.12+
@@ -351,10 +328,12 @@ class Pointer:
 
         return -result if negative else result
 
+    @extracts("float")
     def _extract_float(self, addr: int) -> float:
         """Extract float value using FloatLens (surgical body view)."""
         return FloatLens.from_address(addr + HEADER_SIZE).ob_fval
 
+    @extracts("str")
     def _extract_string(self, addr: int) -> str:
         """Extract string value using StringLens abstractions."""
         # Standard lens starts right after PyObject_HEAD (offset 16)
@@ -387,6 +366,7 @@ class Pointer:
         except Exception as e:
             return f"<Error decoding str: {e}>"
 
+    @extracts("tuple", is_container=True)
     def _extract_tuple(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> tuple:
@@ -401,6 +381,7 @@ class Pointer:
             for i in range(size)
         )
 
+    @extracts("list", is_container=True)
     def _extract_list(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> list:
@@ -416,6 +397,7 @@ class Pointer:
             for i in range(size)
         ]
 
+    @extracts("bytes")
     def _extract_bytes(self, addr: int) -> bytes:
         """Extract bytes data structure (after PyVarObject_HEAD)."""
         # ob_size at HEADER_SIZE (offset 16)
@@ -424,6 +406,7 @@ class Pointer:
         # data starts at +32 (VAR_HEADER_SIZE + 8 for hash)
         return ctypes.string_at(addr + VAR_HEADER_SIZE + 8, size)
 
+    @extracts("set", "frozenset", is_container=True)
     def _extract_set(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> set:
@@ -443,17 +426,20 @@ class Pointer:
                 result.add(val)
         return result
 
+    @extracts("bool")
     def _extract_bool(self, addr: int) -> bool:
         """Extract boolean value (bool inherits from int in CPython)."""
         # Bool uses the same layout as int - extract as int and convert
         int_val = self._extract_int(addr)
         return bool(int_val)
 
+    @extracts("NoneType")
     def _extract_none(self, addr: int) -> None:
         """Extract None singleton."""
         # None is a singleton with no data payload - just return None
         return None
 
+    @extracts("complex")
     def _extract_complex(self, addr: int) -> complex:
         """Extract complex number (two doubles after header)."""
         # PyComplexObject: real at +16, imag at +24
@@ -461,6 +447,7 @@ class Pointer:
         imag = ctypes.c_double.from_address(addr + HEADER_SIZE + 8).value
         return complex(real, imag)
 
+    @extracts("range", is_container=True)
     def _extract_range(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> range:
@@ -476,6 +463,7 @@ class Pointer:
 
         return range(start, stop, step)
 
+    @extracts("slice", is_container=True)
     def _extract_slice(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> slice:
@@ -496,6 +484,7 @@ class Pointer:
 
         return slice(start, stop, step)
 
+    @extracts("bytearray")
     def _extract_bytearray(self, addr: int) -> bytearray:
         """Extract bytearray data (variable-size mutable bytes)."""
         # PyByteArrayObject layout in 3.14:
@@ -512,6 +501,7 @@ class Pointer:
         data = ctypes.string_at(ob_start, size)
         return bytearray(data)
 
+    @extracts("memoryview")
     def _extract_memoryview(self, addr: int) -> bytes:
         """Extract memoryview contents as bytes.
 
@@ -534,6 +524,7 @@ class Pointer:
 
         return ctypes.string_at(buf_ptr, length)
 
+    @extracts("function", is_container=True)
     def _extract_function(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -595,6 +586,7 @@ class Pointer:
 
         return result
 
+    @extracts("type")
     def _extract_type(self, addr: int) -> dict:
         """Extract type object metadata.
 
@@ -627,6 +619,7 @@ class Pointer:
 
         return result
 
+    @extracts("module", is_container=True)
     def _extract_module(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -682,6 +675,7 @@ class Pointer:
 
         return result
 
+    @extracts("code")
     def _extract_code(self, addr: int) -> dict:
         """Extract code object metadata.
 
@@ -724,6 +718,7 @@ class Pointer:
 
         return result
 
+    @extracts("cell", is_container=True)
     def _extract_cell(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -768,6 +763,36 @@ class Pointer:
 
         return result
 
+    @extracts(
+        "BaseException",
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "AttributeError",
+        "RuntimeError",
+        "StopIteration",
+        "OSError",
+        "ImportError",
+        "NameError",
+        "ZeroDivisionError",
+        "FileNotFoundError",
+        "FileExistsError",
+        "PermissionError",
+        "IsADirectoryError",
+        "NotADirectoryError",
+        "TimeoutError",
+        "ConnectionError",
+        "BrokenPipeError",
+        "AssertionError",
+        "LookupError",
+        "SyntaxError",
+        "ModuleNotFoundError",
+        "UnboundLocalError",
+        "RecursionError",
+        is_container=True,
+    )
     def _extract_exception(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -812,6 +837,7 @@ class Pointer:
 
         return result
 
+    @extracts("property", is_container=True)
     def _extract_property(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -875,6 +901,7 @@ class Pointer:
 
         return result
 
+    @extracts("staticmethod", is_container=True)
     def _extract_staticmethod(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -907,6 +934,7 @@ class Pointer:
 
         return result
 
+    @extracts("classmethod", is_container=True)
     def _extract_classmethod(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -939,6 +967,7 @@ class Pointer:
 
         return result
 
+    @extracts("builtin_function_or_method")
     def _extract_builtin_function(self, addr: int) -> dict:
         """Extract builtin_function_or_method object.
 
@@ -976,6 +1005,7 @@ class Pointer:
 
         return result
 
+    @extracts("generator", is_container=True)
     def _extract_generator(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -1006,6 +1036,7 @@ class Pointer:
 
         return result
 
+    @extracts("enumerate", is_container=True)
     def _extract_enumerate(
         self, addr: int, visited: Optional[set] = None, depth: int = 0
     ) -> dict:
@@ -1070,28 +1101,7 @@ class Pointer:
 
             # Track containers in visited to avoid cycles
             # Types that recurse and may contain references
-            is_container = (
-                type_name
-                in [
-                    "list",
-                    "tuple",
-                    "dict",
-                    "set",
-                    "frozenset",
-                    "range",
-                    "slice",
-                    "function",
-                    "module",
-                    "cell",
-                    "property",
-                    "staticmethod",
-                    "classmethod",
-                    "generator",
-                    "enumerate",
-                ]
-                or type_name in self._extractors
-                and "Exception" in type_name
-            )
+            is_container = type_name in type(self)._container_types
             if is_container:
                 visited.add(actual_addr)
 
