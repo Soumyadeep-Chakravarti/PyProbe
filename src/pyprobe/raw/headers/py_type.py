@@ -1,11 +1,45 @@
 import ctypes
 
+
 class PyTypeObject(ctypes.Structure):
     """The 'Class' definition in memory"""
+
     _fields_ = [
         ("ob_refcnt", ctypes.c_ssize_t),
         ("ob_type_ptr", ctypes.c_void_p),
         ("ob_size", ctypes.c_ssize_t),
-        ("tp_name", ctypes.c_char_p), 
-        # ... hundreds of other fields exist here, but we only need the name
+        ("tp_name", ctypes.c_char_p),
+        ("tp_basicsize", ctypes.c_ssize_t),
+        ("tp_itemsize", ctypes.c_ssize_t),
+        ("tp_dealloc", ctypes.c_void_p),
+        ("tp_vectorcall_offset", ctypes.c_ssize_t),
+        ("tp_getattr", ctypes.c_void_p),
+        ("tp_setattr", ctypes.c_void_p),
+        ("tp_as_async", ctypes.c_void_p),
+        ("tp_repr", ctypes.c_void_p),
+        ("tp_as_number", ctypes.c_void_p),
+        ("tp_as_sequence", ctypes.c_void_p),
+        ("tp_as_mapping", ctypes.c_void_p),
+        ("tp_hash", ctypes.c_void_p),
+        ("tp_call", ctypes.c_void_p),
+        ("tp_str", ctypes.c_void_p),
+        ("tp_getattro", ctypes.c_void_p),
+        ("tp_setattro", ctypes.c_void_p),
+        ("tp_as_buffer", ctypes.c_void_p),
+        ("tp_flags", ctypes.c_ulong),
+        ("tp_doc", ctypes.c_char_p),
+        ("tp_traverse", ctypes.c_void_p),
+        ("tp_clear", ctypes.c_void_p),
+        ("tp_richcompare", ctypes.c_void_p),
+        ("tp_weaklistoffset", ctypes.c_ssize_t),
+        ("tp_iter", ctypes.c_void_p),
+        ("tp_iternext", ctypes.c_void_p),
+        ("tp_methods", ctypes.c_void_p),
+        ("tp_members", ctypes.c_void_p),
+        ("tp_getset", ctypes.c_void_p),
+        ("tp_base", ctypes.c_void_p),
+        ("tp_dict", ctypes.c_void_p),
+        ("tp_descr_get", ctypes.c_void_p),
+        ("tp_descr_set", ctypes.c_void_p),
+        ("tp_dictoffset", ctypes.c_ssize_t),
     ]

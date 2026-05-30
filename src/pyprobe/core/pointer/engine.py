@@ -168,34 +168,41 @@ class Pointer:
     ) -> Any:
         result = {"__type__": type_name}
 
-        # Basic filter to avoid deep built-in types if needed
         if type_name in ("type", "module"):
             return result
 
         try:
-            # Validate that type_ptr is actually a type object to prevent garbage pointer segfaults
             type_header = PyObjectHeader.from_address(type_ptr)
             if type_header.ob_type_ptr != id(type):
                 return result
 
-            # Safely check if it's a heap type with a managed dict (3.12+)
-            tp_flags = ctypes.c_uint64.from_address(type_ptr + 168).value
-            if (tp_flags & (1 << 4)) and (tp_flags & (1 << 9)):
-                dict_ptr = ctypes.c_void_p.from_address(addr - 24).value
+            type_obj = PyTypeObject.from_address(type_ptr)
+            tp_flags = type_obj.tp_flags
 
-                # Verify dict_ptr is actually a dictionary to avoid garbage pointer segfaults
-                if dict_ptr and dict_ptr > 0x1000 and (dict_ptr & 0x7) == 0:
-                    dict_header = PyObjectHeader.from_address(dict_ptr)
-                    if dict_header.ob_type_ptr == id(dict):
-                        extracted_dict = self.pull_data_from_address(
-                            dict_ptr, visited, depth + 1
-                        )
-                        if isinstance(extracted_dict, dict):
-                            result["__dict__"] = extracted_dict
-                    else:
-                        inline_ptr = ctypes.c_void_p.from_address(addr - 16).value
-                        if inline_ptr and inline_ptr > 0x1000:
-                            result["__dict__"] = "<Inline Values (Unmaterialized)>"
+            if not (tp_flags & (1 << 4)):
+                return result
+
+            dictoffset = type_obj.tp_dictoffset
+            if dictoffset == 0:
+                return result
+
+            dict_ptr_ptr = addr + dictoffset
+            dict_ptr = ctypes.c_void_p.from_address(dict_ptr_ptr).value
+
+            if not dict_ptr or dict_ptr <= 0x1000 or (dict_ptr & 0x7) != 0:
+                if tp_flags & (1 << 9):
+                    result["__dict__"] = "<Inline Values (Unmaterialized)>"
+                return result
+
+            dict_header = PyObjectHeader.from_address(dict_ptr)
+            if dict_header.ob_type_ptr != id(dict):
+                if tp_flags & (1 << 9):
+                    result["__dict__"] = "<Inline Values (Unmaterialized)>"
+                return result
+
+            extracted_dict = self.pull_data_from_address(dict_ptr, visited, depth + 1)
+            if isinstance(extracted_dict, dict):
+                result["__dict__"] = extracted_dict
         except Exception:
             pass
 
