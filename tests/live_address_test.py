@@ -3,9 +3,12 @@ import time
 import ctypes
 from typing import Literal
 
-# Adjust these imports if your exact class names differ
-from pyprobe.core.Scalpel import mutate_float, safe_list_swap
-from pyprobe.core.offset_discovery import LIST_ITEMS_OFFSET
+from pyprobe.core.Scalpel import (
+    safe_list_swap, mutate_bytes, mutate_str, mutate_int
+)
+from pyprobe.core.offset_discovery import (
+    LIST_ITEMS_OFFSET, STR_DATA_OFFSET
+)
 
 # ── Shared state ──────────────────────────────────────────
 stop_reading = threading.Event()
@@ -49,72 +52,78 @@ def test_float_parallel():
     f = float("100." + "5")
     addr = id(f)
     
+    addr = id(obj)
     print(f"  Object address : {hex(addr)}")
-    print(f"  Initial value  : {f}\n")
+    print(f"  Initial value  : {obj}\n")
+    print("  Mutating...")
 
     stop_reading.clear()
     read_log.clear()
-    reader = threading.Thread(target=continuous_reader, args=(addr, "float"), daemon=True)
-    reader.start()
-    time.sleep(0.05)
-
-    print("  Mutating...")
-    mutations = [999.99, 3.14, 42.0, 777.77]
-    for val in mutations:
-        mutate_float(f, val)
-        print(f"    Mutated to: {val}")
-        time.sleep(0.02)
-
-    stop_reading.set()
-    reader.join(timeout=1)
-
-    print(f"\n  Total reads: {len(read_log)}")
-    print("  Sample reads:")
-    for ts, val in read_log[::5]:
-        print(f"    t={ts:.4f} → {val}")
-
-# ── Test 2: List ──────────────────────────────────────────
-def test_list_parallel():
-    print("\n" + "=" * 55)
-    print("TEST 2: List — Read while mutating")
-    print("=" * 55)
-
-    lst  = list((10, 20, 30, 40, 50))
-    addr = id(lst)
-
-    print(f"  Object address : {hex(addr)}")
-    print(f"  Initial value  : {lst}\n")
-
-    stop_reading.clear()
-    read_log.clear()
-    reader = threading.Thread(target=continuous_reader, args=(addr, "list"), daemon=True)
-    reader.start()
-    time.sleep(0.05)
-
-    print("  Mutating...")
-    swaps = [(0, "ALPHA"), (1, "BETA"), (2, "GAMMA"), (3, "DELTA"), (4, "EPSILON")]
-    for idx, val in swaps:
-        safe_list_swap(lst, idx, val)
-        print(f"    lst[{idx}] = {val!r}")
-        time.sleep(0.02)
-
-    stop_reading.set()
-    reader.join(timeout=1)
-
-    print(f"\n  Total reads: {len(read_log)}")
-    print("  Sample reads:")
-    for ts, val in read_log[::5]:
-        print(f"    t={ts:.4f} → {val}")
-
-# ── Test 3: Address consistency check & RAM Verification ──
-def test_address_never_changes():
-    print("\n" + "=" * 55)
-    print("TEST 3: Address never changes & Final RAM Verification")
-    print("=" * 55)
-
-    f = float("555." + "55")
-    f_addr_before = id(f)
+    t = threading.Thread(target=continuous_reader, args=(addr, obj_type), daemon=True)
+    t.start()
     
+    time.sleep(0.05) 
+    
+    for action_text, func in mutations:
+        func()
+        print(f"    {action_text}")
+        time.sleep(0.02) 
+
+    stop_reading.set()
+    t.join(timeout=1)
+
+    # EXACT FORMATTING FROM YOUR SCREENSHOT
+    print(f"\nTotal reads: {len(read_log)}")
+    print("Sample reads:")
+    step = max(1, len(read_log) // 15)
+    for ts, val in read_log[::step]:
+        display_val = tuple(val) if obj_type == 'tuple' else val
+        print(f"  t={ts:.4f} -> {display_val}")
+
+def test_all_types():
+    #1. Integer
+    i = int("100000000000" + "000000")
+
+    run_parallel_test("Int", i, "int", [
+        (
+            "Mutated to: 888888888888888888",
+            lambda: mutate_int(i, int("888888888888" + "888888"))
+        ),
+        (
+            "Mutated to: 999999999999999999",
+            lambda: mutate_int(i, int("999999999999" + "999999"))
+        )
+    ])
+
+    # 2. List
+    lst = list((10, 20, 30, 40, 50))
+    run_parallel_test("List", lst, "list", [
+        ("lst[0] = 'ALPHA'", lambda: safe_list_swap(lst, 0, "ALPHA")),
+        ("lst[1] = 'BETA'", lambda: safe_list_swap(lst, 1, "BETA")),
+        ("lst[2] = 'GAMMA'", lambda: safe_list_swap(lst, 2, "GAMMA")),
+    ])
+
+    # 3. Bytes
+    b = bytes(bytearray([65, 66, 67, 68]))
+    run_parallel_test("Bytes", b, "bytes", [
+        ("Mutated to: b'WXYZ'", lambda: mutate_bytes(b, b"WXYZ")),
+        ("Mutated to: b'1234'", lambda: mutate_bytes(b, b"1234"))
+    ])
+
+    # 4. String
+    s = "".join(["1", "2", "3", "4"])
+    run_parallel_test("String", s, "str", [
+        ("Mutated to: '5678'", lambda: mutate_str(s, "5678")),
+        ("Mutated to: '90AB'", lambda: mutate_str(s, "90AB"))
+    ])
+
+def test_address_never_changes():
+    print("\n" + "=" * 60)
+    print("TEST: Address never changes & Final RAM Verification")
+    print("=" * 60)
+
+    # Setup all 4
+    i = int("555" + "55")
     lst = list((10, 20, 30))
     lst_addr_before = id(lst)
     ob_item_before = require_address(
@@ -160,12 +169,10 @@ def test_address_never_changes():
     print(f"  Float base address      : {hex(f_addr_before)}")
     print(f"  Float static?           : {'✅ YES' if f_all_same else '❌ NO'}")
     
-    print(f"  List base address       : {hex(lst_addr_before)}")
-    print(f"  List base static?       : {'✅ YES' if lst_all_same else '❌ NO'}")
-    print(f"  List ob_item ptr        : {hex(ob_item_before)}")
-    print(f"  List ob_item static?    : {'✅ YES' if ob_item_all_same else '❌ NO'}")
-
-    print("\n  --- DIRECT RAM READ VERIFICATION ---")
+    i_addr = id(i)
+    lst_addr = id(lst)
+    b_addr = id(b)
+    s_addr = id(s)
     
     # 1. Read Float raw memory at +16
     final_float_ram = ctypes.c_double.from_address(f_addr_before + 16).value
@@ -182,15 +189,17 @@ def test_address_never_changes():
     ptr_1 = require_address(ctypes.c_void_p.from_address(final_ob_item_ptr + 8).value, "ptr_1")
     ptr_2 = require_address(ctypes.c_void_p.from_address(final_ob_item_ptr + 16).value, "ptr_2")
     
-    # Cast pointers back to Python objects to show what sits at that memory address
-    val_0 = ctypes.cast(ptr_0, ctypes.py_object).value
-    val_1 = ctypes.cast(ptr_1, ctypes.py_object).value
-    val_2 = ctypes.cast(ptr_2, ctypes.py_object).value
+    b_sz = ctypes.c_ssize_t.from_address(b_addr + 16).value
+    raw_b = ctypes.string_at(b_addr + 32, b_sz)
     
-    print(f"  Raw List array in RAM   : [{val_0!r}, {val_1!r}, {val_2!r}]")
+    s_sz = ctypes.c_ssize_t.from_address(s_addr + 16).value
+    raw_s = ctypes.string_at(s_addr + STR_DATA_OFFSET, s_sz).decode('ascii', errors='ignore')
 
-# ── Run all ───────────────────────────────────────────────
+    print(f"  Raw Integer in RAM   : {raw_i}")
+    print(f"  Raw List[0] in RAM   : {raw_l_0!r}")
+    print(f"  Raw Bytes in RAM     : {raw_b!r}")
+    print(f"  Raw String in RAM    : {raw_s!r}")
+
 if __name__ == "__main__":
-    test_float_parallel()
-    test_list_parallel()
+    test_all_types()
     test_address_never_changes()

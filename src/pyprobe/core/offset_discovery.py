@@ -220,6 +220,14 @@ except Exception as e:
 # Assign to the constant exactly once at the very end
 DICT_LAYOUT = dict_layout
 
+print("Testing str...")
+try:
+    STR_DATA_OFFSET = _discover_str_data_offset()
+    print(f"Str OK: {_fmt_offset(STR_DATA_OFFSET)}")
+except Exception as e:
+    print(f"Str FAILED: {e}")
+    STR_DATA_OFFSET = None
+
 # ──────────────────────────────────────────────────────
 # Convenience variables
 # ──────────────────────────────────────────────────────
@@ -240,4 +248,6 @@ if __name__ == "__main__":
     print(f"    ma_keys offset     : {_fmt_offset(DICT_MA_KEYS_OFFSET)}")
     print(f"    first value offset : {_fmt_offset(DICT_FIRST_VAL_OFFSET)}")
     print(f"    entry size         : {DICT_ENTRY_SIZE if DICT_ENTRY_SIZE else 'None'} bytes")
+    print()
+    print(f"  Str data offset     : {_fmt_offset(STR_DATA_OFFSET)}")
     print("=" * 40)

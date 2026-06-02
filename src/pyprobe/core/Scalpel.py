@@ -7,16 +7,23 @@ Includes CPython 3.12+ PyLongObject bitfield fixes.
 """
 
 import ctypes
+import types
 import gc
 import sys
 from contextlib import contextmanager
 from typing import Any, Tuple, cast
 
-# ── Import from Phase 1 ────────────────────────────────────────────────────
 from pyprobe.core.offset_discovery import (
     LIST_ITEMS_OFFSET,
     DICT_LAYOUT,
+    STR_DATA_OFFSET
 )
+
+# Globally cache the memory addresses of Python's small integers at load time
+SMALL_INT_ADDRS = {id(i) for i in range(-5, 257)}
+
+# ── Import from Phase 1 ────────────────────────────────────────────────────
+
 
 # ── Constants ──────────────────────────────────────────────────────────────
 IMMORTAL_REFCOUNT_THRESHOLD = 1 << 30
@@ -70,8 +77,8 @@ def is_safe_to_mutate(obj: Any, stack_depth: int = 3) -> Tuple[bool, str]:
     if refcount > IMMORTAL_REFCOUNT_THRESHOLD:
         return False, "Object is immortal"
 
-    # Rule 2: Cached integer
-    if isinstance(obj, int) and SMALL_INT_MIN <= obj <= SMALL_INT_MAX:
+    # Rule 2: Cached integer (Using Address-based check to prevent post-mutation false positives!)
+    if isinstance(obj, int) and id(obj) in SMALL_INT_ADDRS:
         return False, "Small int cache"
 
     # Rule 3: Interned string
@@ -283,6 +290,72 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
         ctypes.c_ssize_t.from_address(old_val_id).value -= 1                 # DECREF old
 
 
+def mutate_bytes(target_bytes: bytes, new_bytes: bytes) -> None:
+    """
+    Overwrites the raw character array of a bytes object in RAM.
+    Lengths MUST match exactly to avoid writing out of bounds.
+    
+    Layout:
+        +0  refcount
+        +8  type pointer
+        +16 ob_size
+        +24 ob_shash (cached hash)
+        +32 ob_sval (raw byte array) ← we overwrite this block
+    """
+    assert_safe(target_bytes, stack_depth=5)
+
+    for referrer in gc.get_referrers(target_bytes):
+        if isinstance(referrer, types.CodeType):
+            raise PermissionError("SECURITY LOCKDOWN: Attempted to mutate live function bytecode (co_code).")
+        
+    if len(target_bytes) != len(new_bytes):
+        raise ValueError("Length mismatch: cannot resize allocated bytes object.")
+    if target_bytes == new_bytes:
+        return
+
+    addr = id(target_bytes)
+    BYTES_VAL_OFFSET = 32
+
+    with gc_suspended():
+        # Overwrite the raw memory block using ctypes.memmove
+        target_buffer = addr + BYTES_VAL_OFFSET
+        source_buffer = id(new_bytes) + BYTES_VAL_OFFSET
+        ctypes.memmove(target_buffer, source_buffer, len(target_bytes))
+        
+        # Invalidate the cached hash by setting it to -1 (so dicts don't break)
+        ctypes.c_ssize_t.from_address(addr + 24).value = -1
+
+
+def mutate_str(target_str: str, new_str: str) -> None:
+    """
+    Overwrites the inline character array of a dynamically created, 
+    non-interned Compact ASCII string in memory.
+    Uses Phase 1 dynamic offset discovery.
+    """
+    assert_safe(target_str, stack_depth=5)
+    if len(target_str) != len(new_str):
+        raise ValueError("Length mismatch: cannot resize allocated string object.")
+    if target_str == new_str:
+        return
+
+    addr = id(target_str)
+
+    # State validation (ensure it is Compact ASCII and not interned)
+    state_flags = ctypes.c_uint32.from_address(addr + 32).value
+    if (state_flags & 0x03) != 0:
+        raise ValueError("Aborting: String is interned.")
+    if ((state_flags >> 2) & 0x07) != 1:
+        raise TypeError("Unsupported encoding. Scalpel only mutates Compact ASCII.")
+
+    with gc_suspended():
+        target_buffer = addr + STR_DATA_OFFSET
+        source_buffer = id(new_str) + STR_DATA_OFFSET
+        ctypes.memmove(target_buffer, source_buffer, len(target_str))
+        
+        # Reset the cached hash
+        ctypes.c_ssize_t.from_address(addr + 24).value = -1
+
+
 # ── Tests ──────────────────────────────────────────────────────────────────
 
 def run_tests():
@@ -314,6 +387,17 @@ def run_tests():
     safe_dict_value_swap(d, "status", "mutated")
     print(f"[Dict] After : {d}")
 
+    # Bytes
+    b = bytes(bytearray([65, 66, 67, 68]))  # b"ABCD"
+    print(f"\n[Bytes] Before: {b}")
+    mutate_bytes(b, b"WXYZ")
+    print(f"[Bytes] After : {b}")
+
+    # String
+    s = "".join(["1", "2", "3", "4"])
+    print(f"\n[Str] Before: {s}")
+    mutate_str(s, "4567")
+    print(f"[Str] After : {s}")
 
 if __name__ == "__main__":
     run_tests()

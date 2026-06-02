@@ -4,6 +4,8 @@ from pyprobe.core.Scalpel import (
     mutate_int,
     safe_list_swap,
     safe_dict_value_swap,
+    mutate_bytes,
+    mutate_str
 )
 
 print("=" * 55)
@@ -13,11 +15,12 @@ print("=" * 55)
 
 # ── Float Test ──────────────────────────────────────────
 print("\n[ FLOAT ]")
-f = float("100.5")
+f = float("100." + "5")
+ptr = pyprobe.pin(f)
 
 print("  Before mutation:")
 print(f"    Address : {hex(id(f))}")
-print(f"    Value   : {f}")
+print(f"    Value   : {ptr.xray()}")
 
 mutate_float(f, 999.99)
 
@@ -73,6 +76,38 @@ print("  After mutation:")
 print(f"    Address : {hex(id(d))}")    # same hona chahiye
 print(f"    Value   : {ptr.xray()}")    # status: mutated
 print(f"    Match   : {hex(id(d)) == hex(ptr.address)}")
+
+# ── Bytes Test ──────────────────────────────────────────
+print("\n[ BYTES ]")
+b = bytes(bytearray([65, 66, 67, 68]))
+ptr = pyprobe.pin(b)
+
+print("  Before mutation:")
+print(f"    Address : {hex(id(b))}")
+print(f"    Value   : {ptr.xray()}")
+
+mutate_bytes(b, b"WXYZ")
+
+print("After mutation:")
+print(f"    Address : {hex(id(b))}")    
+print(f"    Value   : {ptr.xray()}")   
+print(f"    Match   : {hex(id(b)) == hex(ptr.address)}")
+
+# ── String Test ─────────────────────────────────────────
+print("\n[ STRING ]")
+s = "".join(["1", "2", "3", "4"])
+ptr = pyprobe.pin(s)
+
+print("  Before mutation:")
+print(f"    Address : {hex(id(s))}")
+print(f"    Value   : {ptr.xray()}")
+
+mutate_str(s, "5678")
+
+print("After mutation:")
+print(f"    Address : {hex(id(s))}")    
+print(f"    Value   : {ptr.xray()}")    
+print(f"    Match   : {hex(id(s)) == hex(ptr.address)}")
 
 # ── Summary ─────────────────────────────────────────────
 print("\n" + "=" * 55)
