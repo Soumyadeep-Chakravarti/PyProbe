@@ -116,12 +116,20 @@ def assert_safe(obj: Any, stack_depth: int = 3) -> None:
 
 def mutate_float(target_float: float, new_value: float) -> None:
     """
-    Mutate a float in place by overwriting the underlying C double.
+    Overwrite the underlying C double of a Python float.
+
+    Layout:
+        +0  refcount
+        +8  type pointer
+        +16 ob_fval (IEEE 754 double) ← we write here
     """
     assert_safe(target_float, stack_depth=5)
-    addr = id(target_float)
+
+    addr       = id(target_float)
+    double_ptr = ctypes.c_double.from_address(addr + 16)
+
     with gc_suspended():
-        ctypes.c_double.from_address(addr + 16).value = new_value
+        double_ptr.value = new_value
 
 
 def mutate_int(target_int: int, new_value: int) -> None:

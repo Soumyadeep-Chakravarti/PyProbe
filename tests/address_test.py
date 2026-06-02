@@ -111,4 +111,8 @@ print(f"    Match   : {hex(id(s)) == hex(ptr.address)}")
 
 # ── Summary ─────────────────────────────────────────────
 print("\n" + "=" * 55)
+print("KEY POINT:")
+print("  Address same → Python ko pata nahi chala")
+print("  Value badla  → RAM directly mutate hua")
+print("  Yahi hai Phase 2 ka proof!")
 print("=" * 55)
