@@ -122,6 +122,29 @@ def _discover_set_items_offset() -> int:
     raise RuntimeError("Could not discover set items offset!")
 
 
+def _discover_str_data_offset() -> int:
+    """
+    Discover where string character data starts in memory.
+    Compact ASCII strings store their data inline after the object header.
+    """
+    # Create a non-interned string with known content
+    s = "".join(["A", "B", "C", "D"])  # Forces dynamic string creation
+    s_addr = id(s)
+    expected = b"ABCD"
+
+    # Scan for the character data (typically at offset 48 or 56)
+    for offset in range(32, 80, 8):
+        try:
+            # Read bytes at this offset
+            raw = ctypes.string_at(s_addr + offset, 4)
+            if raw == expected:
+                return offset
+        except Exception:
+            continue
+
+    raise RuntimeError("Could not discover string data offset!")
+
+
 def _discover_dict_entry_layout() -> dict:
     """
     Discover dict internal layout from RAM bytes.
@@ -223,6 +246,14 @@ except Exception as e:
     print(f"Dict FAILED: {e}")
     DICT_LAYOUT = None
 
+print("Testing str...")
+try:
+    STR_DATA_OFFSET = _discover_str_data_offset()
+    print(f"Str OK: {_fmt_offset(STR_DATA_OFFSET)}")
+except Exception as e:
+    print(f"Str FAILED: {e}")
+    STR_DATA_OFFSET = None
+
 # ──────────────────────────────────────────────────────
 # Convenience variables
 # ──────────────────────────────────────────────────────
@@ -243,4 +274,6 @@ if __name__ == "__main__":
     print(f"    ma_keys offset     : {_fmt_offset(DICT_MA_KEYS_OFFSET)}")
     print(f"    first value offset : {_fmt_offset(DICT_FIRST_VAL_OFFSET)}")
     print(f"    entry size         : {DICT_ENTRY_SIZE if DICT_ENTRY_SIZE else 'None'} bytes")
+    print()
+    print(f"  Str data offset     : {_fmt_offset(STR_DATA_OFFSET)}")
     print("=" * 40)
