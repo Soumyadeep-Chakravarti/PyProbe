@@ -18,6 +18,11 @@ Diagnose                 Operate                   Zero-copy bridges
 
 We're building the tools to truly understand and control Python's memory - with documented safety guarantees.
 
+### Recent Enhancements
+
+- **Generalized offset discovery**: PyProbe now dynamically discovers memory offsets for internal data structures (tuple items, list items, dict keys) at runtime instead of using hardcoded values, making it more robust across Python versions
+- **Scalpel mutation capabilities**: Integrated safe in-memory mutation functions that allow modifying integers, floats, list elements, and dict values without object re-allocation
+
 ---
 
 ## Quick Start
@@ -68,18 +73,18 @@ ptr = pyprobe.pin(data)
 extracted = ptr.xray()  # Recursively extracts everything
 ```
 
-### Phase 2: Scalpel (In Development)
+### Phase 2: Scalpel (Integrated)
 
 Controlled memory mutation with safety guarantees:
 
 | Capability | Status |
 |------------|--------|
 | Safety model | Documented |
-| Pre-mutation checks | Planned |
-| Integer mutation | Planned |
-| Float mutation | Planned |
-| List element swap | Planned |
-| Dict value update | Planned |
+| Pre-mutation checks | Implemented |
+| Integer mutation | Available |
+| Float mutation | Available |
+| List element swap | Available |
+| Dict value update | Available |
 
 ### Phase 3: Surgeon's Toolkit (Future)
 

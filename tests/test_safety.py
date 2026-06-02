@@ -2,7 +2,6 @@ import sys
 import os
 import unittest
 import ctypes
-import random
 
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin

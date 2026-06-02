@@ -1,12 +1,10 @@
 import unittest
 import sys
-import os
 
 def run_suite():
     """Discover and run all Python tests in the tests/ directory."""
-    print("="*60)
-    print("PyProbe Memory Interpreter: Unified Test Runner".center(60))
-    print("="*60)
+    print("PyProbe — Test Runner")
+    print("=" * 40)
     
     # Discovery
     loader = unittest.TestLoader()
@@ -16,12 +14,12 @@ def run_suite():
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     
-    print("\n" + "="*60)
+    print("\n" + "=" * 40)
     if result.wasSuccessful():
-        print("ALL TESTS PASSED! Memory engine is stable.".center(60))
+        print("ALL PASSED")
     else:
-        print(f"FAILED: {len(result.failures)} failures, {len(result.errors)} errors.".center(60))
-    print("="*60)
+        print(f"FAILED: {len(result.failures)} failures, {len(result.errors)} errors")
+    print("=" * 40)
     
     return result.wasSuccessful()
 

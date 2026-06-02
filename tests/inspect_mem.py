@@ -1,5 +1,4 @@
 import ctypes
-import sys
 
 # Look at dict memory structure directly
 d = {"a": 1}

@@ -1,6 +1,7 @@
 import threading
 import time
 import ctypes
+from typing import Literal
 
 # Adjust these imports if your exact class names differ
 from pyprobe.core.Scalpel import mutate_float, safe_list_swap
@@ -8,24 +9,31 @@ from pyprobe.core.offset_discovery import LIST_ITEMS_OFFSET
 
 # ── Shared state ──────────────────────────────────────────
 stop_reading = threading.Event()
-read_log     = []
+read_log: list[tuple[float, object]] = []
+
+
+def require_address(value: int | None, label: str) -> int:
+    if value is None:
+        raise ValueError(f"{label} is null")
+    return value
 
 # ── Thread 1: Continuous Reader ───────────────────────────
-def continuous_reader(address, obj_type):
+def continuous_reader(address: int, obj_type: Literal["float", "list"]) -> None:
     """
     Reads memory at given address continuously.
     Extracts raw values to avoid inflating Python reference counts.
     """
     while not stop_reading.is_set():
         try:
+            value: object
             if obj_type == "float":
                 # Read the raw C-double at offset +16 directly
                 value = ctypes.c_double.from_address(address + 16).value
-            elif obj_type == "list":
+            else:
                 # Cast temporarily, then copy to avoid holding the reference
                 obj = ctypes.cast(address, ctypes.py_object).value
                 value = list(obj)
-                
+
             timestamp = time.perf_counter()
             read_log.append((timestamp, value))
             time.sleep(0.001)  # 1ms interval
@@ -109,17 +117,23 @@ def test_address_never_changes():
     
     lst = list((10, 20, 30))
     lst_addr_before = id(lst)
-    ob_item_before = ctypes.c_void_p.from_address(lst_addr_before + LIST_ITEMS_OFFSET).value
+    ob_item_before = require_address(
+        ctypes.c_void_p.from_address(lst_addr_before + LIST_ITEMS_OFFSET).value,
+        "list ob_item pointer",
+    )
 
-    f_addresses = []
-    lst_addresses = []
-    ob_item_addresses = []
+    f_addresses: list[int] = []
+    lst_addresses: list[int] = []
+    ob_item_addresses: list[int] = []
 
     def record_addresses():
         while not stop_reading.is_set():
             f_addresses.append(id(f))
             lst_addresses.append(id(lst))
-            current_ob_item = ctypes.c_void_p.from_address(id(lst) + LIST_ITEMS_OFFSET).value
+            current_ob_item = require_address(
+                ctypes.c_void_p.from_address(id(lst) + LIST_ITEMS_OFFSET).value,
+                "current list ob_item pointer",
+            )
             ob_item_addresses.append(current_ob_item)
             time.sleep(0.001)
 
@@ -158,12 +172,15 @@ def test_address_never_changes():
     print(f"  Raw Float in RAM        : {final_float_ram}")
 
     # 2. Read List ob_item pointer, then read the array slots directly
-    final_ob_item_ptr = ctypes.c_void_p.from_address(lst_addr_before + LIST_ITEMS_OFFSET).value
+    final_ob_item_ptr = require_address(
+        ctypes.c_void_p.from_address(lst_addr_before + LIST_ITEMS_OFFSET).value,
+        "final list ob_item pointer",
+    )
     
     # Read the 3 pointer slots inside the array (64-bit = 8 bytes each)
-    ptr_0 = ctypes.c_void_p.from_address(final_ob_item_ptr).value
-    ptr_1 = ctypes.c_void_p.from_address(final_ob_item_ptr + 8).value
-    ptr_2 = ctypes.c_void_p.from_address(final_ob_item_ptr + 16).value
+    ptr_0 = require_address(ctypes.c_void_p.from_address(final_ob_item_ptr).value, "ptr_0")
+    ptr_1 = require_address(ctypes.c_void_p.from_address(final_ob_item_ptr + 8).value, "ptr_1")
+    ptr_2 = require_address(ctypes.c_void_p.from_address(final_ob_item_ptr + 16).value, "ptr_2")
     
     # Cast pointers back to Python objects to show what sits at that memory address
     val_0 = ctypes.cast(ptr_0, ctypes.py_object).value
