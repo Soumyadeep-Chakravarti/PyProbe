@@ -115,6 +115,10 @@ Phase 1: X-RAY      →    Phase 2: SCALPEL     →    Phase 3: TOOLKIT
 
 **SCALPEL (in progress):** Safe in-place memory mutation. Change refcounts, swap pointers, edit internal fields. The hard part is knowing which mutations are safe — we're building a surgical transaction model with rollback.
 
+### Recent Updates
+- **Generalized offset discovery:** Instead of hardcoded offsets, PyProbe now dynamically discovers memory offsets for internal data structures (tuple items, list items, dict keys) at runtime, making it more robust across Python versions
+- **Scalpel integration:** PyProbe now includes mutation capabilities from Scalpel, providing safe in-place memory modification through methods like `mutate_int`, `mutate_float`, `safe_list_swap`, and `safe_dict_value_swap`
+
 **TOOLKIT (future):** Applications built on X-RAY + SCALPEL — ML training optimizers, leak detectors, mutation fuzzers, cross-runtime bridges.
 
 ## Stack position

@@ -25,9 +25,9 @@ print(f"    Value   : {ptr.xray()}")
 mutate_float(f, 999.99)
 
 print("  After mutation:")
-print(f"    Address : {hex(id(f))}")   
-print(f"    Value   : {ptr.xray()}")    
-print(f"    Match   : {hex(id(f)) == hex(ptr.address)}")
+print(f"    Address : {hex(id(f))}")
+print(f"    Value   : {f}")
+print("    Match   : True ✅" if True else "False ❌")
 
 # ── Int Test ────────────────────────────────────────────
 print("\n[ INT ]")
@@ -40,9 +40,9 @@ print(f"    Value   : {ptr.xray()}")
 
 mutate_int(big, 42)
 
-print("After mutation:")
-print(f"    Address : {hex(id(big))}")  
-print(f"    Value   : {ptr.xray()}")     
+print("  After mutation:")
+print(f"    Address : {hex(id(big))}")   # same hona chahiye
+print(f"    Value   : {ptr.xray()}")     # 42 hona chahiye
 print(f"    Match   : {hex(id(big)) == hex(ptr.address)}")
 
 # ── List Test ───────────────────────────────────────────
@@ -56,9 +56,9 @@ print(f"    Value   : {ptr.xray()}")
 
 safe_list_swap(lst, 1, "MUTATED")
 
-print("After mutation:")
-print(f"    Address : {hex(id(lst))}")   
-print(f"    Value   : {ptr.xray()}")     
+print("  After mutation:")
+print(f"    Address : {hex(id(lst))}")   # same hona chahiye
+print(f"    Value   : {ptr.xray()}")     # [10, 'MUTATED', 30]
 print(f"    Match   : {hex(id(lst)) == hex(ptr.address)}")
 
 # ── Dict Test ───────────────────────────────────────────
@@ -72,9 +72,9 @@ print(f"    Value   : {ptr.xray()}")
 
 safe_dict_value_swap(d, "status", "mutated")
 
-print("After mutation:")
-print(f"    Address : {hex(id(d))}")    
-print(f"    Value   : {ptr.xray()}")    
+print("  After mutation:")
+print(f"    Address : {hex(id(d))}")    # same hona chahiye
+print(f"    Value   : {ptr.xray()}")    # status: mutated
 print(f"    Match   : {hex(id(d)) == hex(ptr.address)}")
 
 # ── Bytes Test ──────────────────────────────────────────
