@@ -10,12 +10,9 @@ from pyprobe import pin
 
 
 def showcase() -> None:
-    """Demonstrate the power of the PyProbe Memory Interpreter."""
-    print("=" * 60)
-    print(
-        "PyProbe Memory Interpreter: Industrial Runtime Inspection".center(60)
-    )
-    print("=" * 60)
+    """Demonstrate PyProbe's live memory introspection and mutation."""
+    print("PyProbe — Memory Inspector")
+    print("=" * 50)
 
     # 1. Primitives & Strings (Multi-encoding)
     print("\n[ STEP 1: Diverse Primitives ]")
@@ -24,6 +21,7 @@ def showcase() -> None:
     p3: str = "🙂🐍🔥"  # UCS-4 String
     p4: bytes = b"binary\x00data"  # Bytes
     for item in [p1, p2, p3, p4]:
+        print(f"The Item: {item}")
         pin(item).examine()
 
     # 2. Collections (Graph Inspection)
@@ -31,6 +29,7 @@ def showcase() -> None:
     # A combined general dictionary
     d: dict[int, str] = {i: str(i) for i in range(5)}
     del d[2]  # Introduce a tombstone
+    print(d)
     pin(d).examine()
 
     # 3. Custom Objects (__dict__ logic)
@@ -49,6 +48,7 @@ def showcase() -> None:
     print("\n[ STEP 4: Cycle Detection ]")
     recursive_list: list[Any] = [1, 2]
     recursive_list.append(recursive_list)
+    print(recursive_list)
     pin(recursive_list).examine()
 
     print("\n" + "=" * 60)

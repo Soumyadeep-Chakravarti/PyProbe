@@ -165,7 +165,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__doc__"], "This is the docstring.")
 
     def test_lambda(self):
-        f: Callable[[int], int] = lambda x: x * 2
+        f: Callable[[int], int] = lambda x: x * 2  # noqa: E731
         p = pin(f)
         val = p.xray()
         self.assertEqual(val["__type__"], "function")
@@ -261,7 +261,7 @@ class TestCodeExtraction(unittest.TestCase):
         self.assertIn("hello", val["co_consts"])
 
     def test_lambda_code_object(self):
-        f: Callable[[int], int] = lambda x: x * 2
+        f: Callable[[int], int] = lambda x: x * 2  # noqa: E731
         code = f.__code__
         p = pin(code)
         val = p.xray()

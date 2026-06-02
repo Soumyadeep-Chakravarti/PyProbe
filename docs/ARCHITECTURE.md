@@ -262,6 +262,19 @@ if ctypes.sizeof(ctypes.c_void_p) != 8:
     raise RuntimeError("PyProbe only supports 64-bit CPython")
 ```
 
+### Dynamic Offset Discovery
+
+Instead of hardcoding memory offsets, PyProbe now dynamically discovers them at runtime:
+
+```python
+# In src/pyprobe/core/offset_discovery.py
+TUPLE_ITEMS_OFFSET = _discover_tuple_items_offset()   # e.g., 32
+LIST_ITEMS_OFFSET = _discover_list_items_offset()     # e.g., 24
+DICT_MA_KEYS_OFFSET = _discover_dict_entry_layout()["ma_keys_offset"]  # e.g., 16
+```
+
+This approach eliminates version-specific checks and makes PyProbe more robust across different CPython versions.
+
 ---
 
 ## Data Flow: How Extraction Works
@@ -304,28 +317,38 @@ User calls: pyprobe.pin(my_dict).xray()
 
 ---
 
-## Future Architecture (Phase 2: Scalpel)
+## Current Architecture (Phase 2: Scalpel - Integrated)
 
-The scalpel phase will add write capabilities. Proposed structure:
+The scalpel phase has been integrated into the Pointer class. Mutation capabilities are now available directly on Pointer instances.
 
-```
-src/pyprobe/
-├── core/
-│   ├── pointer/
-│   │   ├── engine.py       # Existing read functionality
-│   │   └── mutator.py      # NEW: Write functionality
-│   └── safety/
-│       ├── guards.py       # NEW: Pre-mutation safety checks
-│       └── invariants.py   # NEW: Invariant verification
-```
+### Mutation Methods on Pointer
 
-New methods on `Pointer`:
-- `poke(offset, value)` - Raw memory write
-- `mutate_int(new_value)` - Type-aware integer mutation
-- `mutate_list_element(index, new_ptr)` - List surgery
-- `is_safe_to_mutate()` - Safety check
+The Pointer class now includes the following mutation methods that delegate to Scalpel functions:
 
-See [SAFETY_MODEL.md](./SAFETY_MODEL.md) for the safety analysis guiding this design.
+- `mutate_float(new_value)` - Safely mutate a float object's value in-place
+- `mutate_int(new_value)` - Safely mutate an int object's value in-place (with small int cache protection)
+- `safe_list_swap(index, new_obj)` - Safely swap a list item at the given index
+- `safe_dict_value_swap(key, new_value)` - Safely swap a dict value for the given key
+
+These methods perform pre-mutation safety checks (refcount verification, interning detection, etc.) and use the Scalpel module's `gc_suspended` context manager to prevent garbage collection during mutation.
+
+### Safety Guards
+
+Safety checks are performed within each mutation method:
+- Refcount checks to prevent mutating shared objects
+- Interning detection for strings and small integers
+- Small int cache protection (-5 to 256)
+- Immortal object respect (PEP 683)
+- GC suspension during mutation to prevent inconsistent states
+
+See [SAFETY_MODEL.md](./SAFETY_MODEL.md) for the complete safety analysis.
+
+### Internal Structure
+
+The mutation functionality leverages:
+- `src/pyprobe/core/Scalpel.py` - Core mutation functions with safety checks
+- `src/pyprobe/core/offset_discovery.py` - Dynamic offset discovery for internal data structures
+- Existing Pointer class infrastructure for type checking and address validation
 
 ---
 

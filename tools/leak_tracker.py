@@ -1,7 +1,6 @@
 import sys
 import os
 import ctypes
-import gc
 import time
 from typing import Any
 

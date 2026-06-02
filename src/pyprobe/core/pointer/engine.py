@@ -180,7 +180,7 @@ class Pointer:
         values_ptr = lens.ma_values
         is_split = values_ptr is not None
         values_array = (
-            ctypes.cast(values_ptr, ctypes.POINTER(ctypes.c_void_p))
+            ctypes.cast(values_ptr + 8, ctypes.POINTER(ctypes.c_void_p))
             if is_split
             else None
         )
@@ -339,7 +339,9 @@ class Pointer:
             for i in range(size)
         ]
 
-    def _extract_bytes(self, addr: int) -> bytes:
+    def _extract_bytes(
+        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+    ) -> bytes:
         """Extract bytes data structure."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         return ctypes.string_at(addr + VAR_HEADER_SIZE + 8, size)
@@ -363,16 +365,22 @@ class Pointer:
                 result.add(val)
         return result
 
-    def _extract_bool(self, addr: int) -> bool:
+    def _extract_bool(
+        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+    ) -> bool:
         """Extract boolean value."""
         int_val = self._extract_int(addr)
         return bool(int_val)
 
-    def _extract_none(self, addr: int) -> None:
+    def _extract_none(
+        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+    ) -> None:
         """Extract None singleton."""
         return None
 
-    def _extract_complex(self, addr: int) -> complex:
+    def _extract_complex(
+        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+    ) -> complex:
         """Extract complex number."""
         real = ctypes.c_double.from_address(addr + HEADER_SIZE).value
         imag = ctypes.c_double.from_address(addr + HEADER_SIZE + 8).value
@@ -405,7 +413,9 @@ class Pointer:
         step = None if step == "NULL" else step
         return slice(start, stop, step)
 
-    def _extract_bytearray(self, addr: int) -> bytearray:
+    def _extract_bytearray(
+        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+    ) -> bytearray:
         """Extract bytearray data."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         ob_start = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 24).value
@@ -740,7 +750,7 @@ class Pointer:
         values_ptr = self.lens.ma_values
         is_split = values_ptr is not None
         values_array = (
-            ctypes.cast(values_ptr, ctypes.POINTER(ctypes.c_void_p))
+            ctypes.cast(values_ptr + 8, ctypes.POINTER(ctypes.c_void_p))
             if is_split
             else None
         )
@@ -751,16 +761,10 @@ class Pointer:
         stride = self._get_entry_stride(is_unicode, is_split)
 
         print(
-            f"\n[ DICT GEOMETRY: "
-            f"{'UNICODE' if is_unicode else 'GENERAL'} | "
-            f"{'SPLIT' if is_split else 'COMBINED'} ]"
+            f"  dict: {'UNICODE' if is_unicode else 'GENERAL'} "
+            f"{'SPLIT' if is_split else 'COMBINED'}"
+            f"  keys={hex(keys_addr)}  start=+{entries_start_offset}  stride={stride}"
         )
-        print(
-            f"  Keys: {hex(keys_addr)}"
-            f" | Start: +{entries_start_offset}"
-            f" | Stride: {stride}"
-        )
-        print("[ PARSED DENSE ENTRIES ]")
 
         dummy_ptr = _get_dummy_ptr()
         for i in range(keys_obj.dk_nentries):
@@ -772,31 +776,31 @@ class Pointer:
                 if key_ptr and key_ptr != dummy_ptr:
                     key = self.pull_data_from_address(key_ptr)
                     value = self.pull_data_from_address(val_ptr) if val_ptr else "NULL"
-                    print(f"  ▶ Slot {i} | Key: {key} | Val: {value}")
+                    print(f"    [{i}] {key!r} = {value}")
                 elif key_ptr == dummy_ptr:
-                    print(f"    Slot {i} | <Tombstone/Dummy>")
+                    print(f"    [{i}] <tombstone>")
                 else:
-                    print(f"    Slot {i} | <Empty>")
+                    print(f"    [{i}] <empty>")
             except Exception as e:
-                print(f"    Slot {i} | Memory Error: {e}")
+                print(f"    [{i}] <error: {e}>")
 
     def _examine_set(self) -> None:
-        """Examine set internal hash table — unchanged, already works."""
+        """Examine set internal hash table."""
         if not self.lens or not isinstance(self.lens, SetLens):
             return
 
-        print("\n[ SET HASH TABLE ]")
         table_ptr = self.lens.table
         dummy_ptr = _get_dummy_ptr()
 
+        print(f"  set: mask={self.lens.mask}")
         for i in range(self.lens.mask + 1):
             entry = table_ptr[i]
             key_addr = entry.key
             if key_addr and key_addr != dummy_ptr:
                 val = self.pull_data_from_address(key_addr)
-                print(f"  ▶ Bucket {i:2d} | Hash: {hex(entry.hash)} | Key: {val}")
+                print(f"    [{i:2d}] hash={hex(entry.hash)} key={val!r}")
             elif key_addr == dummy_ptr:
-                print(f"    Bucket {i:2d} | <Dummy>")
+                print(f"    [{i:2d}] <dummy>")
 
     def _examine_tuple(self) -> None:
         """Examine tuple items using dynamically discovered offset."""
@@ -805,11 +809,11 @@ class Pointer:
         items_array = ctypes.cast(
             self.address + TUPLE_ITEMS_OFFSET, ctypes.POINTER(ctypes.c_void_p)
         )
-        print("\n[ TUPLE ITEMS ]")
+        print(f"  tuple: size={size}")
         for i in range(size):
             addr = items_array[i]
             val = self.pull_data_from_address(addr)
-            print(f"  Item {i} | Addr: {hex(addr)} | Value: {val}")
+            print(f"    [{i}] {val!r}")
 
     def _examine_list(self) -> None:
         """Display list contents using dynamically discovered offset."""
@@ -824,44 +828,40 @@ class Pointer:
             return
         items_array = ctypes.cast(items_ptr, ctypes.POINTER(ctypes.c_void_p))
 
-        print("\n[ LIST CONTENTS (Follow Pointers) ]")
+        print(f"  list: size={self.lens.ob_size}")
         for i in range(self.lens.ob_size):
             obj_addr = items_array[i]
             actual_value = self.pull_data_from_address(obj_addr)
-            _, item_type_name = self._get_type_info(obj_addr)
-            print(
-                f"  Item {i}"
-                f" | Addr: {hex(obj_addr)}"
-                f" | {item_type_name.ljust(5)}: {actual_value}"
-            )
+            print(f"    [{i}] {actual_value!r}")
 
     def dump_raw(self, addr: int, length: int = 64, label: str = "MEMORY") -> None:
         """Display hex dump of memory with ASCII representation."""
-        print(f"\n--- DEBUG DUMP: {label} AT {hex(addr)} ---")
+        print(f"\n  raw dump ({label}):")
         try:
             raw_data = ctypes.string_at(addr, length)
             for i in range(0, length, 16):
-                offset = f"+{i:03x}"
                 chunk = raw_data[i : i + 16]
                 hex_vals = " ".join(f"{b:02x}" for b in chunk).ljust(47)
                 ascii_vals = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
-                print(f"{offset} | {hex_vals} | {ascii_vals}")
+                print(f"    +{i:02x}  {hex_vals} {ascii_vals}")
         except Exception as e:
-            print(f"FAILED TO READ: {e}")
-        print("-" * 60)
+            print(f"    FAILED TO READ: {e}")
 
     def _print_logical_data(self) -> None:
         """Display logical field data from lens."""
         if not self.lens:
             return
 
-        print("\n[ LOGICAL DATA ]")
+        print("  fields:")
         for field_info in getattr(self.lens, "_fields_", []):
             field_name = field_info[0]
             val = getattr(self.lens, field_name)
+            # Skip ctypes objects that aren't useful to display
+            if hasattr(val, "_type_"):
+                continue
             is_ptr = isinstance(val, int) and field_name.endswith("_ptr")
             display_val = hex(val) if is_ptr else val
-            print(f"  FIELD: {field_name.ljust(10)} | VALUE: {display_val}")
+            print(f"    {field_name} = {display_val}")
 
     def mutate_float(self, new_value: float) -> None:
         """Mutate the float value in-place."""
@@ -896,29 +896,21 @@ class Pointer:
 
     def _print_raw_memory(self, raw_bytes: bytes, total_size: int) -> None:
         """Display raw memory dump in hex format."""
-        print("\n[ RAW MEMORY DUMP ]")
-        for i in range(0, total_size, 8):
-            chunk = raw_bytes[i : i + 8]
-            marker = "<- DATA" if i == 16 else ""
-            print(f"  +{i:02} | {chunk.hex(' ')} {marker}")
+        print("  hex:")
+        for i in range(0, total_size, 16):
+            chunk = raw_bytes[i : i + 16]
+            hex_vals = " ".join(f"{b:02x}" for b in chunk).ljust(47)
+            ascii_vals = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+            print(f"    +{i:02x}  {hex_vals} {ascii_vals}")
 
     def examine(self) -> None:
         """Comprehensive examination of Python object memory structure."""
         total_size = sys.getsizeof(self._target)
-        dump_size = min(total_size, 256)
+        dump_size = min(total_size, 64)
         raw_bytes = ctypes.string_at(self.address, dump_size)
 
-        print(f"\n{'=' * 60}")
-        print(
-            f"X-RAY AT: {hex(self.address)}"
-            f" | TYPE: {self.type_name}"
-            f" | SIZE: {total_size} bytes"
-        )
-        print(f"{'=' * 60}")
-
-        print("[ HEADER ]")
-        print(f"  +00 | ob_refcnt : {self.header.ob_refcnt}")
-        print(f"  +08 | ob_type   : {hex(self.header.ob_type_ptr)}")
+        print(f"\n  X-RAY {hex(self.address)} type={self.type_name} size={total_size}B")
+        print(f"  refcnt={self.header.ob_refcnt}  type_ptr={hex(self.header.ob_type_ptr)}")
 
         dispatch = {
             "list": self._examine_list,
@@ -933,8 +925,4 @@ class Pointer:
 
         self._print_logical_data()
         self._print_raw_memory(raw_bytes, dump_size)
-
-        if total_size > 256:
-            print("  ... (Memory dump truncated for display)")
-
-        print(f"{'=' * 60}")
+        print()
