@@ -1,8 +1,5 @@
 import ctypes
-<<<<<<< Updated upstream
-=======
 
->>>>>>> Stashed changes
 
 d2 = {1: "a", 2.5: "b", (1,2): "c"} # General Keys
 addr = id(d2)

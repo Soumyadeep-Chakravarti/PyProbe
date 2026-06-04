@@ -1,5 +1,6 @@
 import ctypes
 import os
+import sys
 from typing import Dict, List, Optional
 
 
@@ -192,6 +193,43 @@ def _discover_dict_entry_layout() -> Dict[str, Optional[int]]:
 def _fmt_offset(val: Optional[int]) -> str:
     return f"+{val}" if val is not None else "None"
 
+def _discover_str_data_offset() -> int:
+    """
+    Statically determines the internal memory offset where the raw character data 
+    begins inside a Python string object wrapper.
+    
+    Adhering to strict input validation, it checks the internal runtime environment 
+    boundaries before computing offsets using structural size constants.
+    """
+    # Defensive programming: ensure we are operating within a standard 64-bit architecture
+    if sys.maxsize <= 2**32:
+        raise NotImplementedError("32-bit architectures are not supported by PyProbe's safety model.")
+
+    # Create a simple dynamic anchor string to analyze structural layout
+    anchor = "A"
+    anchor_address = id(anchor)
+    
+    # In CPython 64-bit, a short ASCII string uses the PyASCIIObject/PyCompactUnicodeObject struct.
+    # The character array is appended immediately after the standard header fields.
+    # For a standard ASCII/Latin-1 compact string, this structural offset is 48 bytes.
+    expected_offset = 48
+    
+    try:
+        # Validate that the character data ('A' -> ASCII 65) is exactly where we expect it
+        target_byte = ctypes.c_char.from_address(anchor_address + expected_offset).value
+        
+        if target_byte == b'A':
+            return expected_offset
+        else:
+            # Fallback/Diagnostic mapping if the runtime layout differs slightly due to specific micro-versions
+            # Scan a safe, localized window to prevent out-of-bounds segmentation faults
+            for scan_offset in range(24, 72, 8):
+                if ctypes.c_char.from_address(anchor_address + scan_offset).value == b'A':
+                    return scan_offset
+            raise MemoryError("Unable to securely verify string layout boundaries.")
+            
+    except Exception as err:
+        raise RuntimeError(f"Safety constraint violated during layout verification: {err}")
 
 # ──────────────────────────────────────────────────────
 # Run once at module load time
