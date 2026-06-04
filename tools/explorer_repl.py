@@ -1,6 +1,5 @@
 import sys
 import os
-import ctypes
 import ast
 
 sys.path.insert(0, os.path.abspath("src"))
@@ -9,7 +8,7 @@ from pyprobe.core.pointer.engine import Pointer
 
 
 # Safe built-in functions allowed in REPL evaluation
-_SAFE_BUILTINS = {
+_SAFE_BUILTINS: dict[str, object] = {
     "True": True,
     "False": False,
     "None": None,
@@ -37,7 +36,7 @@ _SAFE_BUILTINS = {
 }
 
 
-def safe_eval(expr: str, context: dict):
+def safe_eval(expr: str, context: dict[str, object]) -> object:
     """Safely evaluate a Python expression.
 
     Only allows literal values and safe built-in operations.
@@ -86,7 +85,7 @@ def safe_eval(expr: str, context: dict):
                 raise ValueError(f"Access to '{node.attr}' is not allowed")
 
     # Create a restricted globals dict
-    safe_globals = {"__builtins__": _SAFE_BUILTINS}
+    safe_globals: dict[str, object] = {"__builtins__": _SAFE_BUILTINS}
     safe_globals.update(context)
 
     return eval(compile(tree, "<repl>", "eval"), safe_globals, context)
@@ -112,7 +111,7 @@ def repl():
     # We can use a reference object to get an engine instance
     _dummy = Pointer(target=1)
 
-    context = {}
+    context: dict[str, object] = {}
 
     while True:
         try:

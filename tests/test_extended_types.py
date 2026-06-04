@@ -3,6 +3,7 @@
 import sys
 import os
 import unittest
+from typing import Callable
 
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
@@ -146,7 +147,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__name__"], "my_func")
 
     def test_function_with_defaults(self):
-        def func_with_defaults(x, y=10, z="hello"):
+        def func_with_defaults(x: int, y: int = 10, z: str = "hello") -> int:
             return x + y
 
         p = pin(func_with_defaults)
@@ -164,7 +165,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__doc__"], "This is the docstring.")
 
     def test_lambda(self):
-        f = lambda x: x * 2
+        f: Callable[[int], int] = lambda x: x * 2
         p = pin(f)
         val = p.xray()
         self.assertEqual(val["__type__"], "function")
@@ -236,7 +237,7 @@ class TestCodeExtraction(unittest.TestCase):
     """Tests for code object extraction."""
 
     def test_function_code_object(self):
-        def sample_func(x, y):
+        def sample_func(x: int, y: int) -> int:
             return x + y
 
         code = sample_func.__code__
@@ -247,7 +248,7 @@ class TestCodeExtraction(unittest.TestCase):
 
     def test_code_with_constants(self):
         def func_with_consts():
-            x = 42
+            _x = 42
             return "hello"
 
         code = func_with_consts.__code__
@@ -260,7 +261,7 @@ class TestCodeExtraction(unittest.TestCase):
         self.assertIn("hello", val["co_consts"])
 
     def test_lambda_code_object(self):
-        f = lambda x: x * 2
+        f: Callable[[int], int] = lambda x: x * 2
         code = f.__code__
         p = pin(code)
         val = p.xray()
@@ -272,14 +273,16 @@ class TestCellExtraction(unittest.TestCase):
     """Tests for cell object (closure) extraction."""
 
     def test_closure_cell(self):
-        def outer(x):
-            def inner():
+        def outer(x: int) -> Callable[[], int]:
+            def inner() -> int:
                 return x
 
             return inner
 
         inner_func = outer(42)
         # Get the cell object from the closure
+        if inner_func.__closure__ is None:
+            raise RuntimeError("Missing closure.")
         cell = inner_func.__closure__[0]
         p = pin(cell)
         val = p.xray()
@@ -287,13 +290,15 @@ class TestCellExtraction(unittest.TestCase):
         self.assertEqual(val["cell_contents"], 42)
 
     def test_closure_cell_string(self):
-        def outer(msg):
-            def inner():
+        def outer(msg: str) -> Callable[[], str]:
+            def inner() -> str:
                 return msg
 
             return inner
 
         inner_func = outer("hello world")
+        if inner_func.__closure__ is None:
+            raise RuntimeError("Missing closure.")
         cell = inner_func.__closure__[0]
         p = pin(cell)
         val = p.xray()
@@ -301,14 +306,16 @@ class TestCellExtraction(unittest.TestCase):
         self.assertEqual(val["cell_contents"], "hello world")
 
     def test_closure_multiple_cells(self):
-        def outer(a, b):
-            def inner():
+        def outer(a: int, b: int) -> Callable[[], int]:
+            def inner() -> int:
                 return a + b
 
             return inner
 
         inner_func = outer(10, 20)
         # First cell
+        if inner_func.__closure__ is None:
+            raise RuntimeError("Missing closure.")
         cell_a = inner_func.__closure__[0]
         p_a = pin(cell_a)
         val_a = p_a.xray()
@@ -396,14 +403,14 @@ class TestDescriptorExtraction(unittest.TestCase):
     def test_property_fget_fset(self):
         class MyClass:
             def __init__(self):
-                self._val = 0
+                self._val: int = 0
 
             @property
-            def value(self):
+            def value(self) -> int:
                 return self._val
 
             @value.setter
-            def value(self, v):
+            def value(self, v: int) -> None:
                 self._val = v
 
         prop = MyClass.__dict__["value"]
@@ -487,7 +494,7 @@ class TestGeneratorExtraction(unittest.TestCase):
         gen.close()
 
     def test_generator_with_values(self):
-        def count_up(n):
+        def count_up(n: int):
             for i in range(n):
                 yield i
 

@@ -1,6 +1,7 @@
 import threading
 import time
 import ctypes
+from typing import Callable
 
 from pyprobe.core.Scalpel import (
     safe_list_swap, mutate_bytes, mutate_str, mutate_int
@@ -11,11 +12,12 @@ from pyprobe.core.offset_discovery import (
 
 # ── Shared state ──────────────────────────────────────────
 stop_reading = threading.Event()
-read_log     = []
+read_log: list[tuple[float, object]] = []
 
-def continuous_reader(address, obj_type):
+def continuous_reader(address: int, obj_type: str) -> None:
     while not stop_reading.is_set():
         try:
+            val: object = None
             if obj_type == "float":
                 val = ctypes.c_double.from_address(address + 16).value
             elif obj_type == "int":
@@ -30,14 +32,17 @@ def continuous_reader(address, obj_type):
                 val = ctypes.string_at(address + 32, sz) 
             elif obj_type == "str":
                 sz = ctypes.c_ssize_t.from_address(address + 16).value
-                val = ctypes.string_at(address + STR_DATA_OFFSET, sz).decode('ascii', errors='ignore')
+                if STR_DATA_OFFSET is None:
+                    raise RuntimeError("String data offset is unavailable.")
+                str_offset: int = STR_DATA_OFFSET
+                val = ctypes.string_at(address + str_offset, sz).decode('ascii', errors='ignore')
                 
             read_log.append((time.perf_counter(), val))
             time.sleep(0.001)
         except Exception:
             pass
 
-def run_parallel_test(title, obj, obj_type, mutations):
+def run_parallel_test(title: str, obj: object, obj_type: str, mutations: list[tuple[str, Callable[[], None]]]) -> None:
     print("\n" + "=" * 60)
     print(f"TEST: {title} — Read while mutating")
     print("=" * 60)
@@ -67,7 +72,7 @@ def run_parallel_test(title, obj, obj_type, mutations):
     print("Sample reads:")
     step = max(1, len(read_log) // 15)
     for ts, val in read_log[::step]:
-        display_val = tuple(val) if obj_type == 'tuple' else val
+        display_val = val
         print(f"  t={ts:.4f} -> {display_val}")
 
 def test_all_types():
@@ -136,7 +141,10 @@ def test_address_never_changes():
     print(f"  Integer static?      : ✅ YES")
     print(f"  List base address    : {hex(lst_addr)}")
     print(f"  List base static?    : ✅ YES")
-    print(f"  List ob_item ptr     : {hex(ob_item_ptr)}")
+    if ob_item_ptr is None:
+        raise RuntimeError("Could not locate list storage pointer.")
+    ob_item_ptr_addr: int = ob_item_ptr
+    print(f"  List ob_item ptr     : {hex(ob_item_ptr_addr)}")
     print(f"  List ob_item static? : ✅ YES")
     print(f"  Bytes base address   : {hex(b_addr)}")
     print(f"  Bytes static?        : ✅ YES")
@@ -146,14 +154,19 @@ def test_address_never_changes():
     print("  --- DIRECT RAM READ VERIFICATION ---")
     raw_i = ctypes.cast(i_addr, ctypes.py_object).value
     
-    l_ptr_0 = ctypes.c_void_p.from_address(ob_item_ptr).value
+    l_ptr_0 = ctypes.c_void_p.from_address(ob_item_ptr_addr).value
+    if l_ptr_0 is None:
+        raise RuntimeError("Could not read list item pointer.")
     raw_l_0 = ctypes.cast(l_ptr_0, ctypes.py_object).value
     
     b_sz = ctypes.c_ssize_t.from_address(b_addr + 16).value
     raw_b = ctypes.string_at(b_addr + 32, b_sz)
     
     s_sz = ctypes.c_ssize_t.from_address(s_addr + 16).value
-    raw_s = ctypes.string_at(s_addr + STR_DATA_OFFSET, s_sz).decode('ascii', errors='ignore')
+    if STR_DATA_OFFSET is None:
+        raise RuntimeError("String data offset is unavailable.")
+    str_offset: int = STR_DATA_OFFSET
+    raw_s = ctypes.string_at(s_addr + str_offset, s_sz).decode('ascii', errors='ignore')
 
     print(f"  Raw Integer in RAM   : {raw_i}")
     print(f"  Raw List[0] in RAM   : {raw_l_0!r}")

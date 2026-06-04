@@ -1,7 +1,8 @@
 import ctypes
 
 class Node:
-    pass
+    x: int
+    y: int
 
 n = Node()
 n.x = 10

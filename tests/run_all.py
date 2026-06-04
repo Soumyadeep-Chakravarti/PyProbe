@@ -1,6 +1,5 @@
 import unittest
 import sys
-import os
 
 def run_suite():
     """Discover and run all Python tests in the tests/ directory."""

@@ -1,20 +1,19 @@
 import sys
 import os
 import ctypes
-import gc
 import time
 
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
 
 class RefCountTracker:
-    def __init__(self, obj):
-        self._target = obj
+    def __init__(self, obj: object):
+        self._target: object = obj
         self._addr = id(obj)
         self._initial_refcnt = pin(obj).header.ob_refcnt
-        self._history = [(0, self._initial_refcnt)]
+        self._history: list[tuple[float, int]] = [(0.0, self._initial_refcnt)]
 
-    def snapshot(self, label=""):
+    def snapshot(self, label: str = "") -> None:
         # We need to manually read the refcnt from the address
         # but avoid creating new refs if possible (pin creates some)
         # Actually, pin(obj) creates temporary refs.
@@ -39,13 +38,13 @@ class RefCountTracker:
 def test_leak_tracking():
     # Setup
     print("Initializing Leak Tracker...")
-    data = {"secret": "data"}
+    data: dict[str, object] = {"secret": "data"}
     tracker = RefCountTracker(data)
     tracker.snapshot("Initial")
 
     # Simulate leaks
     print("\nAdding to global leak list...")
-    leak_list = []
+    leak_list: list[object] = []
     leak_list.append(data)
     tracker.snapshot("After Link")
 
