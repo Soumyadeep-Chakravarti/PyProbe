@@ -1,14 +1,8 @@
 import ctypes
 
 class Node:
-<<<<<<< HEAD
-    def __init__(self) -> None:
-        self.x = 0
-        self.y = 0
-=======
     x: int
     y: int
->>>>>>> test-ruleset-workflow
 
 n = Node()
 n.x = 10

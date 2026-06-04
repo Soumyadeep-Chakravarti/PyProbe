@@ -2,15 +2,15 @@ import sys
 import os
 from typing import Any, Dict, Optional, Set, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pyprobe.core.pointer.engine import Pointer
-
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
 
+if TYPE_CHECKING:
+    from pyprobe.core.pointer.engine import Pointer
+
 def complex_graph_tour():
     """Showcase PyProbe on a complex, messy object graph."""
-
+    
     # Node in a doubly linked list
     class Node:
         def __init__(self, val: int) -> None:
@@ -24,14 +24,13 @@ def complex_graph_tour():
     n2 = Node(2)
     n1.next = n2
     n2.prev = n1
-
+    
     # A self-reference via a dictionary
     metadata: Dict[str, Any] = {"node": n1, "tags": {"core", "graph"}}
     n1.meta = metadata
-
+    
     # A set with some interned and non-interned objects
     collection: Set[Any] = {n1, n2, "stable_string", (1, 2)}
-    n1.meta["collection"] = collection  # Link it so it is used and tracked
     
     print("\n[ X-RAY OF DOUBLY LINKED LIST NODE ]")
     p: "Pointer" = pin(n1)  # type: ignore[attr-defined]

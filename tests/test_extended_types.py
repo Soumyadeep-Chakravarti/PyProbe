@@ -3,11 +3,7 @@
 import sys
 import os
 import unittest
-<<<<<<< HEAD
-from typing import Callable, Generator
-=======
 from typing import Callable
->>>>>>> test-ruleset-workflow
 
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
@@ -169,11 +165,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__doc__"], "This is the docstring.")
 
     def test_lambda(self):
-<<<<<<< HEAD
-        f: Callable[[int], int] = lambda x: x * 2  # noqa: E731
-=======
         f: Callable[[int], int] = lambda x: x * 2
->>>>>>> test-ruleset-workflow
         p = pin(f)
         val = p.xray()
         self.assertEqual(val["__type__"], "function")
@@ -256,11 +248,7 @@ class TestCodeExtraction(unittest.TestCase):
 
     def test_code_with_constants(self):
         def func_with_consts():
-<<<<<<< HEAD
-            _ = 42
-=======
             _x = 42
->>>>>>> test-ruleset-workflow
             return "hello"
 
         code = func_with_consts.__code__
@@ -273,11 +261,7 @@ class TestCodeExtraction(unittest.TestCase):
         self.assertIn("hello", val["co_consts"])
 
     def test_lambda_code_object(self):
-<<<<<<< HEAD
-        f: Callable[[int], int] = lambda x: x * 2  # noqa: E731
-=======
         f: Callable[[int], int] = lambda x: x * 2
->>>>>>> test-ruleset-workflow
         code = f.__code__
         p = pin(code)
         val = p.xray()
@@ -297,12 +281,8 @@ class TestCellExtraction(unittest.TestCase):
 
         inner_func = outer(42)
         # Get the cell object from the closure
-<<<<<<< HEAD
-        assert inner_func.__closure__ is not None
-=======
         if inner_func.__closure__ is None:
             raise RuntimeError("Missing closure.")
->>>>>>> test-ruleset-workflow
         cell = inner_func.__closure__[0]
         p = pin(cell)
         val = p.xray()
@@ -317,12 +297,8 @@ class TestCellExtraction(unittest.TestCase):
             return inner
 
         inner_func = outer("hello world")
-<<<<<<< HEAD
-        assert inner_func.__closure__ is not None
-=======
         if inner_func.__closure__ is None:
             raise RuntimeError("Missing closure.")
->>>>>>> test-ruleset-workflow
         cell = inner_func.__closure__[0]
         p = pin(cell)
         val = p.xray()
@@ -338,12 +314,8 @@ class TestCellExtraction(unittest.TestCase):
 
         inner_func = outer(10, 20)
         # First cell
-<<<<<<< HEAD
-        assert inner_func.__closure__ is not None
-=======
         if inner_func.__closure__ is None:
             raise RuntimeError("Missing closure.")
->>>>>>> test-ruleset-workflow
         cell_a = inner_func.__closure__[0]
         p_a = pin(cell_a)
         val_a = p_a.xray()
@@ -509,7 +481,7 @@ class TestGeneratorExtraction(unittest.TestCase):
     """Tests for generator object extraction."""
 
     def test_generator_basic(self):
-        def gen_func() -> Generator[int, None, None]:
+        def gen_func():
             yield 1
             yield 2
             yield 3
@@ -522,11 +494,7 @@ class TestGeneratorExtraction(unittest.TestCase):
         gen.close()
 
     def test_generator_with_values(self):
-<<<<<<< HEAD
-        def count_up(n: int) -> Generator[int, None, None]:
-=======
         def count_up(n: int):
->>>>>>> test-ruleset-workflow
             for i in range(n):
                 yield i
 
@@ -556,8 +524,8 @@ class TestEnumerateExtraction(unittest.TestCase):
 
     def test_enumerate_after_iteration(self):
         e = enumerate(["a", "b", "c"])
-        _ = next(e)  # Consume first element
-        _ = next(e)  # Consume second element
+        next(e)  # Consume first element
+        next(e)  # Consume second element
         p = pin(e)
         val = p.xray()
         self.assertEqual(val["__type__"], "enumerate")
@@ -566,4 +534,4 @@ class TestEnumerateExtraction(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    _ = unittest.main()
+    unittest.main()
