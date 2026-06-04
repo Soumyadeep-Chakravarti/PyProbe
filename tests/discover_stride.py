@@ -1,5 +1,6 @@
 import ctypes
 
+<<<<<<< HEAD
 
 def require_address(value: int | None, label: str) -> int:
 	if value is None:
@@ -9,6 +10,13 @@ def require_address(value: int | None, label: str) -> int:
 d = {"a": 1, "b": 2} # 2 entries
 addr = id(d)
 keys_addr = require_address(ctypes.c_void_p.from_address(addr + 32).value, "keys_addr")
+=======
+d: dict[str, int] = {"a": 1, "b": 2} # 2 entries
+addr = id(d)
+keys_addr: int | None = ctypes.c_void_p.from_address(addr + 32).value
+if keys_addr is None:
+	raise RuntimeError("Could not locate dict keys address.")
+>>>>>>> test-ruleset-workflow
 metadata = ctypes.string_at(keys_addr, 32)
 # log2_indices_total = metadata[9]
 start: int = 32 + (1 << metadata[9])

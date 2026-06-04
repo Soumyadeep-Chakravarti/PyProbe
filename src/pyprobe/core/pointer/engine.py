@@ -3,7 +3,11 @@
 import ctypes
 import sys
 import warnings
+<<<<<<< HEAD
 from typing import Any, Callable, Dict, Optional, Tuple, Type, Union, cast
+=======
+from typing import Any, Dict, Optional, Tuple, Type, Union, cast
+>>>>>>> test-ruleset-workflow
 
 from pyprobe.raw.headers.py_object import PyObjectHeader
 from pyprobe.raw.headers.py_type import PyTypeObject
@@ -21,9 +25,19 @@ from pyprobe.raw.lenses.tuple_lens import TupleLens
 from pyprobe.core.offset_discovery import (
     TUPLE_ITEMS_OFFSET,
     LIST_ITEMS_OFFSET,
+<<<<<<< HEAD
     DICT_MA_KEYS_OFFSET,
 )
 
+=======
+    DICT_MA_KEYS_OFFSET,  # type: ignore[attr-defined]
+)
+
+# Type aliases
+VisitedSet = set[int]
+ExtractorFunc = Any  # Callable to extractor method
+
+>>>>>>> test-ruleset-workflow
 # PyObject_HEAD
 HEADER_SIZE = 16
 
@@ -31,7 +45,11 @@ HEADER_SIZE = 16
 VAR_HEADER_SIZE = 24
 
 # Industrial Singleton Discovery
+<<<<<<< HEAD
 _dummy_ptr: Optional[int] = None
+=======
+_dummy_ptr_cache: Optional[int] = None
+>>>>>>> test-ruleset-workflow
 
 
 def _get_dummy_ptr() -> Optional[int]:
@@ -45,13 +63,19 @@ def _get_dummy_ptr() -> Optional[int]:
         The memory address of the <dummy> singleton, or None if it
         could not be located (with a warning).
     """
+<<<<<<< HEAD
     global _dummy_ptr
     if _dummy_ptr is None:
+=======
+    global _dummy_ptr_cache
+    if _dummy_ptr_cache is None:
+>>>>>>> test-ruleset-workflow
         try:
             # We locate it via a temporary dict tombstone
             d = {0: 0}
             del d[0]
             addr = id(d)
+<<<<<<< HEAD
             dict_keys_offset = DICT_MA_KEYS_OFFSET
             if dict_keys_offset is None:
                 return None
@@ -65,6 +89,18 @@ def _get_dummy_ptr() -> Optional[int]:
             # General dict has hash(8) before key
             # Total offset: 32 + 8 + 8 = 48.
             _dummy_ptr = ctypes.c_void_p.from_address(keys_addr + 48).value
+=======
+            # ── CHANGE 4: Use discovered offset instead of hardcoded +32 ──
+            if DICT_MA_KEYS_OFFSET is not None:
+                keys_addr: Optional[int] = ctypes.c_void_p.from_address(addr + DICT_MA_KEYS_OFFSET).value
+                # In 3.14, indices start at +32.
+                # Entry 0 key starts at +32 + indices_size + hash_offset
+                # For size 8, indices size is 8.
+                # General dict has hash(8) before key
+                # Total offset: 32 + 8 + 8 = 48.
+                if keys_addr is not None:
+                    _dummy_ptr_cache = ctypes.c_void_p.from_address(keys_addr + 48).value
+>>>>>>> test-ruleset-workflow
         except Exception as e:
             warnings.warn(
                 f"Failed to locate <dummy> singleton: {e}. "
@@ -72,7 +108,11 @@ def _get_dummy_ptr() -> Optional[int]:
                 RuntimeWarning,
                 stacklevel=2,
             )
+<<<<<<< HEAD
     return _dummy_ptr
+=======
+    return _dummy_ptr_cache
+>>>>>>> test-ruleset-workflow
 
 
 # Architecture Guard
@@ -110,7 +150,11 @@ class Pointer:
         self.header_size = 16
         self.data_addr: int = self.address + self.header_size
 
+<<<<<<< HEAD
         self._extractors = {
+=======
+        self._extractors: Dict[str, Any] = {
+>>>>>>> test-ruleset-workflow
             "int": self._extract_int,
             "float": self._extract_float,
             "complex": self._extract_complex,
@@ -170,8 +214,13 @@ class Pointer:
         self.lens = self._get_lens()
 
     def _extract_dict(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[Any, Any]:
+>>>>>>> test-ruleset-workflow
         """Extract dictionary items using surgical DictLens."""
         lens = DictLens.from_address(addr + HEADER_SIZE)
         if not lens.ma_keys:
@@ -179,8 +228,13 @@ class Pointer:
 
         values_ptr = lens.ma_values
         is_split = values_ptr is not None
+<<<<<<< HEAD
         values_array = (
             ctypes.cast(values_ptr + 8, ctypes.POINTER(ctypes.c_void_p))
+=======
+        values_array: Optional[Any] = (
+            ctypes.cast(values_ptr, ctypes.POINTER(ctypes.c_void_p))
+>>>>>>> test-ruleset-workflow
             if is_split
             else None
         )
@@ -188,12 +242,15 @@ class Pointer:
         keys_addr = lens.ma_keys
         keys_obj = DictKeysLens.from_address(keys_addr)
 
-        entries_start_offset, _, is_unicode, _ = self._get_dict_geometry(
-            ctypes.cast(keys_addr, ctypes.POINTER(DictKeysLens))
-        )
+        keys_ptr: Any = ctypes.cast(keys_addr, ctypes.POINTER(DictKeysLens))
+        entries_start_offset, _, is_unicode, _ = self._get_dict_geometry(keys_ptr)
         stride = self._get_entry_stride(is_unicode, is_split)
 
+<<<<<<< HEAD
         result: dict[str, Any] = {}
+=======
+        result: Dict[Any, Any] = {}
+>>>>>>> test-ruleset-workflow
         dummy_ptr = _get_dummy_ptr()
         for i in range(keys_obj.dk_nentries):
             entry_addr = keys_addr + entries_start_offset + (i * stride)
@@ -278,9 +335,13 @@ class Pointer:
             result += digits_array[i] * (1 << (30 * i))
         return -result if negative else result
 
+<<<<<<< HEAD
     def _extract_float(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> float:
+=======
+    def _extract_float(self, addr: int) -> float:
+>>>>>>> test-ruleset-workflow
         """Extract float value using FloatLens."""
         return FloatLens.from_address(addr + HEADER_SIZE).ob_fval
 
@@ -311,7 +372,11 @@ class Pointer:
             return f"<Error decoding str: {e}>"
 
     def _extract_tuple(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+>>>>>>> test-ruleset-workflow
     ) -> tuple[Any, ...]:
         """Extract tuple items using dynamically discovered offset."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
@@ -325,7 +390,11 @@ class Pointer:
         )
 
     def _extract_list(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+>>>>>>> test-ruleset-workflow
     ) -> list[Any]:
         """Extract list items using dynamically discovered offset."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
@@ -339,15 +408,23 @@ class Pointer:
             for i in range(size)
         ]
 
+<<<<<<< HEAD
     def _extract_bytes(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> bytes:
+=======
+    def _extract_bytes(self, addr: int) -> bytes:
+>>>>>>> test-ruleset-workflow
         """Extract bytes data structure."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         return ctypes.string_at(addr + VAR_HEADER_SIZE + 8, size)
 
     def _extract_set(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+>>>>>>> test-ruleset-workflow
     ) -> set[Any]:
         """Extract set using surgical lens — unchanged, already works."""
         lens = SetLens.from_address(addr + self.header_size)
@@ -365,9 +442,13 @@ class Pointer:
                 result.add(val)
         return result
 
+<<<<<<< HEAD
     def _extract_bool(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> bool:
+=======
+    def _extract_bool(self, addr: int) -> bool:
+>>>>>>> test-ruleset-workflow
         """Extract boolean value."""
         int_val = self._extract_int(addr)
         return bool(int_val)
@@ -378,15 +459,20 @@ class Pointer:
         """Extract None singleton."""
         return None
 
+<<<<<<< HEAD
     def _extract_complex(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> complex:
+=======
+    def _extract_complex(self, addr: int) -> complex:
+>>>>>>> test-ruleset-workflow
         """Extract complex number."""
         real = ctypes.c_double.from_address(addr + HEADER_SIZE).value
         imag = ctypes.c_double.from_address(addr + HEADER_SIZE + 8).value
         return complex(real, imag)
 
     def _extract_range(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> range:
         """Extract range object."""
@@ -408,14 +494,41 @@ class Pointer:
         start = self.pull_data_from_address(start_ptr, visited, depth + 1) if start_ptr is not None else "NULL"
         stop = self.pull_data_from_address(stop_ptr, visited, depth + 1) if stop_ptr is not None else "NULL"
         step = self.pull_data_from_address(step_ptr, visited, depth + 1) if step_ptr is not None else "NULL"
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> range:
+        """Extract range object."""
+        start_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE).value
+        stop_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 8).value
+        step_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 16).value
+        start = self.pull_data_from_address(start_ptr or 0, visited, depth + 1) if start_ptr else 0
+        stop = self.pull_data_from_address(stop_ptr or 0, visited, depth + 1) if stop_ptr else 0
+        step = self.pull_data_from_address(step_ptr or 1, visited, depth + 1) if step_ptr else 1
+        return range(start, stop, step)
+
+    def _extract_slice(
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> slice:
+        """Extract slice object."""
+        start_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE).value
+        stop_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 8).value
+        step_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 16).value
+        start = self.pull_data_from_address(start_ptr or 0, visited, depth + 1) if start_ptr else None
+        stop = self.pull_data_from_address(stop_ptr or 0, visited, depth + 1) if stop_ptr else None
+        step = self.pull_data_from_address(step_ptr or 0, visited, depth + 1) if step_ptr else None
+>>>>>>> test-ruleset-workflow
         start = None if start == "NULL" else start
         stop = None if stop == "NULL" else stop
         step = None if step == "NULL" else step
         return slice(start, stop, step)
 
+<<<<<<< HEAD
     def _extract_bytearray(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> bytearray:
+=======
+    def _extract_bytearray(self, addr: int) -> bytearray:
+>>>>>>> test-ruleset-workflow
         """Extract bytearray data."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         ob_start = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 24).value
@@ -424,9 +537,13 @@ class Pointer:
         data = ctypes.string_at(ob_start, size)
         return bytearray(data)
 
+<<<<<<< HEAD
     def _extract_memoryview(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> bytes:
+=======
+    def _extract_memoryview(self, addr: int) -> bytes:
+>>>>>>> test-ruleset-workflow
         """Extract memoryview contents as bytes."""
         buf_ptr = ctypes.c_void_p.from_address(addr + 56).value
         length = ctypes.c_ssize_t.from_address(addr + 72).value
@@ -435,6 +552,7 @@ class Pointer:
         return ctypes.string_at(buf_ptr, length)
 
     def _extract_function(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract function object metadata."""
@@ -447,11 +565,26 @@ class Pointer:
             result["__qualname__"] = self.pull_data_from_address(qualname_ptr, visited, depth + 1)
         defaults_ptr = ctypes.c_void_p.from_address(addr + 56).value
         if defaults_ptr is not None:
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract function object metadata."""
+        result = {"__type__": "function"}
+        name_ptr = ctypes.c_void_p.from_address(addr + 32).value
+        if name_ptr:
+            result["__name__"] = self.pull_data_from_address(name_ptr, visited, depth + 1)
+        qualname_ptr = ctypes.c_void_p.from_address(addr + 40).value
+        if qualname_ptr:
+            result["__qualname__"] = self.pull_data_from_address(qualname_ptr, visited, depth + 1)
+        defaults_ptr = ctypes.c_void_p.from_address(addr + 56).value
+        if defaults_ptr:
+>>>>>>> test-ruleset-workflow
             result["__defaults__"] = self.pull_data_from_address(defaults_ptr, visited, depth + 1)
         doc_ptr = ctypes.c_void_p.from_address(addr + 80).value
         if doc_ptr is not None:
             result["__doc__"] = self.pull_data_from_address(doc_ptr, visited, depth + 1)
         module_ptr = ctypes.c_void_p.from_address(addr + 104).value
+<<<<<<< HEAD
         if module_ptr is not None:
             result["__module__"] = self.pull_data_from_address(module_ptr, visited, depth + 1)
         return result
@@ -461,6 +594,15 @@ class Pointer:
     ) -> dict[str, Any]:
         """Extract type object metadata."""
         result: dict[str, Any] = {"__type__": "type"}
+=======
+        if module_ptr:
+            result["__module__"] = self.pull_data_from_address(module_ptr, visited, depth + 1)
+        return result
+
+    def _extract_type(self, addr: int) -> Dict[str, Any]:
+        """Extract type object metadata."""
+        result = {"__type__": "type"}
+>>>>>>> test-ruleset-workflow
         try:
             tp_name_ptr = ctypes.c_char_p.from_address(addr + 24).value
             if tp_name_ptr:
@@ -472,6 +614,7 @@ class Pointer:
         return result
 
     def _extract_module(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract module object metadata."""
@@ -486,6 +629,22 @@ class Pointer:
                     result["__doc__"] = md_dict_typed.get("__doc__")
                     result["__file__"] = md_dict_typed.get("__file__")
                     keys = [str(key) for key in md_dict_typed.keys()]
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract module object metadata."""
+        result: Dict[str, Any] = {"__type__": "module"}
+        try:
+            dict_ptr = ctypes.c_void_p.from_address(addr + 16).value
+            if dict_ptr:
+                md_dict = self.pull_data_from_address(dict_ptr, visited, depth + 1)
+                if isinstance(md_dict, dict):
+                    md_dict_typed = cast(Dict[Any, Any], md_dict)
+                    result["__name__"] = str(md_dict_typed.get("__name__", "<unknown>"))
+                    result["__doc__"] = md_dict_typed.get("__doc__")
+                    result["__file__"] = md_dict_typed.get("__file__")
+                    keys: list[Any] = list(md_dict_typed.keys())
+>>>>>>> test-ruleset-workflow
                     result["__dict_keys__"] = keys[:20]
                     if len(keys) > 20:
                         result["__dict_keys__"].append(f"... and {len(keys) - 20} more")
@@ -500,26 +659,41 @@ class Pointer:
             result["__dict_keys__"] = []
         return result
 
+<<<<<<< HEAD
     def _extract_code(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract code object metadata."""
         result: dict[str, Any] = {"__type__": "code"}
+=======
+    def _extract_code(self, addr: int) -> Dict[str, Any]:
+        """Extract code object metadata."""
+        result = {"__type__": "code"}
+>>>>>>> test-ruleset-workflow
         try:
             consts_ptr = ctypes.c_void_p.from_address(addr + 24).value
             filename_ptr = ctypes.c_void_p.from_address(addr + 112).value
             name_ptr = ctypes.c_void_p.from_address(addr + 120).value
+<<<<<<< HEAD
             if name_ptr is not None:
                 result["co_name"] = self.pull_data_from_address(name_ptr)
             if filename_ptr is not None:
                 result["co_filename"] = self.pull_data_from_address(filename_ptr)
             if consts_ptr is not None:
+=======
+            if name_ptr:
+                result["co_name"] = self.pull_data_from_address(name_ptr)
+            if filename_ptr:
+                result["co_filename"] = self.pull_data_from_address(filename_ptr)
+            if consts_ptr:
+>>>>>>> test-ruleset-workflow
                 result["co_consts"] = self.pull_data_from_address(consts_ptr)
         except Exception as e:
             result["error"] = str(e)
         return result
 
     def _extract_cell(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract cell object."""
@@ -527,6 +701,15 @@ class Pointer:
         try:
             content_ptr = ctypes.c_void_p.from_address(addr + 16).value
             if content_ptr is not None:
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract cell object."""
+        result = {"__type__": "cell"}
+        try:
+            content_ptr = ctypes.c_void_p.from_address(addr + 16).value
+            if content_ptr:
+>>>>>>> test-ruleset-workflow
                 result["cell_contents"] = self.pull_data_from_address(content_ptr, visited, depth + 1)
             else:
                 result["cell_contents"] = "<empty cell>"
@@ -535,33 +718,52 @@ class Pointer:
         return result
 
     def _extract_exception(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract exception object."""
         result: dict[str, Any] = {"__type__": "exception"}
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract exception object."""
+        result: Dict[str, Any] = {"__type__": "exception"}
+>>>>>>> test-ruleset-workflow
         try:
             _, type_name = self._get_type_info(addr)
             result["exception_type"] = type_name
             args_ptr = ctypes.c_void_p.from_address(addr + 24).value
+<<<<<<< HEAD
             if args_ptr is not None:
+=======
+            if args_ptr:
+>>>>>>> test-ruleset-workflow
                 result["args"] = self.pull_data_from_address(args_ptr, visited, depth + 1)
             else:
-                result["args"] = ()
+                result["args"] = tuple()
         except Exception as e:
             result["exception_type"] = "<unknown>"
             result["args"] = (f"<error extracting: {e}>",)
         return result
 
     def _extract_property(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract property descriptor."""
         result: dict[str, Any] = {"__type__": "property"}
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract property descriptor."""
+        result = {"__type__": "property"}
+>>>>>>> test-ruleset-workflow
         try:
             fget_ptr = ctypes.c_void_p.from_address(addr + 16).value
             fset_ptr = ctypes.c_void_p.from_address(addr + 24).value
             fdel_ptr = ctypes.c_void_p.from_address(addr + 32).value
             doc_ptr = ctypes.c_void_p.from_address(addr + 40).value
+<<<<<<< HEAD
             if fget_ptr is not None:
                 result["fget"] = self.pull_data_from_address(fget_ptr, visited, depth + 1)
             if fset_ptr is not None:
@@ -569,12 +771,22 @@ class Pointer:
             if fdel_ptr is not None:
                 result["fdel"] = self.pull_data_from_address(fdel_ptr, visited, depth + 1)
             if doc_ptr is not None:
+=======
+            if fget_ptr:
+                result["fget"] = self.pull_data_from_address(fget_ptr, visited, depth + 1)
+            if fset_ptr:
+                result["fset"] = self.pull_data_from_address(fset_ptr, visited, depth + 1)
+            if fdel_ptr:
+                result["fdel"] = self.pull_data_from_address(fdel_ptr, visited, depth + 1)
+            if doc_ptr:
+>>>>>>> test-ruleset-workflow
                 result["__doc__"] = self.pull_data_from_address(doc_ptr, visited, depth + 1)
         except Exception as e:
             result["error"] = str(e)
         return result
 
     def _extract_staticmethod(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract staticmethod descriptor."""
@@ -582,12 +794,22 @@ class Pointer:
         try:
             callable_ptr = ctypes.c_void_p.from_address(addr + 16).value
             if callable_ptr is not None:
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract staticmethod descriptor."""
+        result = {"__type__": "staticmethod"}
+        try:
+            callable_ptr = ctypes.c_void_p.from_address(addr + 16).value
+            if callable_ptr:
+>>>>>>> test-ruleset-workflow
                 result["__func__"] = self.pull_data_from_address(callable_ptr, visited, depth + 1)
         except Exception as e:
             result["error"] = str(e)
         return result
 
     def _extract_classmethod(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract classmethod descriptor."""
@@ -595,11 +817,21 @@ class Pointer:
         try:
             callable_ptr = ctypes.c_void_p.from_address(addr + 16).value
             if callable_ptr is not None:
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract classmethod descriptor."""
+        result = {"__type__": "classmethod"}
+        try:
+            callable_ptr = ctypes.c_void_p.from_address(addr + 16).value
+            if callable_ptr:
+>>>>>>> test-ruleset-workflow
                 result["__func__"] = self.pull_data_from_address(callable_ptr, visited, depth + 1)
         except Exception as e:
             result["error"] = str(e)
         return result
 
+<<<<<<< HEAD
     def _extract_builtin_function(
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
@@ -608,6 +840,14 @@ class Pointer:
         try:
             ml_ptr = ctypes.c_void_p.from_address(addr + 16).value
             if ml_ptr is not None:
+=======
+    def _extract_builtin_function(self, addr: int) -> Dict[str, Any]:
+        """Extract builtin_function_or_method object."""
+        result = {"__type__": "builtin_function_or_method"}
+        try:
+            ml_ptr = ctypes.c_void_p.from_address(addr + 16).value
+            if ml_ptr:
+>>>>>>> test-ruleset-workflow
                 name_ptr = ctypes.c_char_p.from_address(ml_ptr).value
                 if name_ptr:
                     result["__name__"] = name_ptr.decode("utf-8", errors="replace")
@@ -620,29 +860,48 @@ class Pointer:
         return result
 
     def _extract_generator(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract generator object metadata."""
         result: dict[str, Any] = {"__type__": "generator"}
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract generator object metadata."""
+        result = {"__type__": "generator"}
+>>>>>>> test-ruleset-workflow
         result["status"] = "generator object (state not fully extracted)"
         return result
 
     def _extract_enumerate(
+<<<<<<< HEAD
         self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
     ) -> dict[str, Any]:
         """Extract enumerate object."""
         result: dict[str, Any] = {"__type__": "enumerate"}
+=======
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
+        """Extract enumerate object."""
+        result: Dict[str, Any] = {"__type__": "enumerate"}
+>>>>>>> test-ruleset-workflow
         try:
             index = ctypes.c_ssize_t.from_address(addr + 16).value
-            result["start_index"] = index
+            result["start_index"] = int(index)
         except Exception as e:
             result["start_index"] = f"<error: {e}>"
         return result
 
     def pull_data_from_address(
         self,
+<<<<<<< HEAD
         addr: Union[int, ctypes.c_void_p, None],
         visited: Optional[set[int]] = None,
+=======
+        addr: Union[int, ctypes.c_void_p],
+        visited: Optional[VisitedSet] = None,
+>>>>>>> test-ruleset-workflow
         depth: int = 0,
     ) -> Any:
         """Extract Python object data from memory address."""
@@ -674,9 +933,17 @@ class Pointer:
             if is_container:
                 visited.add(actual_addr)
 
+<<<<<<< HEAD
             extractor: Callable[..., Any] | None = self._extractors.get(type_name)
             if extractor:
                 return extractor(actual_addr, visited, depth)
+=======
+            extractor = self._extractors.get(type_name)
+            if extractor:
+                if is_container:
+                    return extractor(actual_addr, visited, depth)
+                return extractor(actual_addr)
+>>>>>>> test-ruleset-workflow
 
             return f"<{type_name} @ {hex(actual_addr)}>"
         except Exception as e:
@@ -720,14 +987,22 @@ class Pointer:
         entry_addr: int,
         stride: int,
         is_split: bool,
+<<<<<<< HEAD
         values_array: Any,
+=======
+        values_array: Optional[Any],
+>>>>>>> test-ruleset-workflow
         index: int,
     ) -> Tuple[Optional[int], Optional[int]]:
         """Read key and value pointers from a dictionary entry."""
         key_offset = 0 if stride == 16 else 8
         key_ptr = ctypes.c_void_p.from_address(entry_addr + key_offset).value
 
+<<<<<<< HEAD
         if is_split and values_array is not None:
+=======
+        if is_split and values_array:
+>>>>>>> test-ruleset-workflow
             val_ptr = values_array[index]
         else:
             val_offset = 8 if stride == 16 else 16
@@ -749,13 +1024,18 @@ class Pointer:
 
         values_ptr = self.lens.ma_values
         is_split = values_ptr is not None
+<<<<<<< HEAD
         values_array = (
             ctypes.cast(values_ptr + 8, ctypes.POINTER(ctypes.c_void_p))
+=======
+        values_array: Optional[Any] = (
+            ctypes.cast(values_ptr, ctypes.POINTER(ctypes.c_void_p))
+>>>>>>> test-ruleset-workflow
             if is_split
             else None
         )
 
-        keys_ptr = ctypes.cast(keys_addr, ctypes.POINTER(DictKeysLens))
+        keys_ptr: Any = ctypes.cast(keys_addr, ctypes.POINTER(DictKeysLens))
         geom = self._get_dict_geometry(keys_ptr)
         entries_start_offset, _, is_unicode, _ = geom
         stride = self._get_entry_stride(is_unicode, is_split)
@@ -765,6 +1045,15 @@ class Pointer:
             f"{'SPLIT' if is_split else 'COMBINED'}"
             f"  keys={hex(keys_addr)}  start=+{entries_start_offset}  stride={stride}"
         )
+<<<<<<< HEAD
+=======
+        print(
+            f"  Keys: {hex(keys_addr)}"
+            f" | Start: +{entries_start_offset}"
+            f" | Stride: {stride}"
+        )
+        print("[ PARSED DENSE ENTRIES ]")
+>>>>>>> test-ruleset-workflow
 
         dummy_ptr = _get_dummy_ptr()
         for i in range(keys_obj.dk_nentries):
@@ -785,7 +1074,7 @@ class Pointer:
                 print(f"    [{i}] <error: {e}>")
 
     def _examine_set(self) -> None:
-        """Examine set internal hash table."""
+        """Examine set internal hash table — unchanged, already works."""
         if not self.lens or not isinstance(self.lens, SetLens):
             return
 
@@ -805,7 +1094,11 @@ class Pointer:
     def _examine_tuple(self) -> None:
         """Examine tuple items using dynamically discovered offset."""
         size = ctypes.c_ssize_t.from_address(self.address + HEADER_SIZE).value
+<<<<<<< HEAD
         # ── CHANGE 5: Use discovered offset instead of hardcoded VAR_HEADER_SIZE + 8 ──
+=======
+        # TUPLE_ITEMS_OFFSET is always int (or module load fails)
+>>>>>>> test-ruleset-workflow
         items_array = ctypes.cast(
             self.address + TUPLE_ITEMS_OFFSET, ctypes.POINTER(ctypes.c_void_p)
         )
@@ -820,6 +1113,7 @@ class Pointer:
         if not isinstance(self.lens, ListLens):
             return
 
+<<<<<<< HEAD
         # ── CHANGE 6: Use discovered offset instead of lens.ob_item ──
         items_ptr = ctypes.c_void_p.from_address(
             self.address + LIST_ITEMS_OFFSET
@@ -837,13 +1131,40 @@ class Pointer:
     def dump_raw(self, addr: int, length: int = 64, label: str = "MEMORY") -> None:
         """Display hex dump of memory with ASCII representation."""
         print(f"\n  raw dump ({label}):")
+=======
+        # LIST_ITEMS_OFFSET is always int (or module load fails)
+        items_ptr: Optional[int] = ctypes.c_void_p.from_address(
+            self.address + LIST_ITEMS_OFFSET
+        ).value
+        if items_ptr is not None:
+            items_array = ctypes.cast(items_ptr, ctypes.POINTER(ctypes.c_void_p))
+
+            print("\n[ LIST CONTENTS (Follow Pointers) ]")
+            for i in range(self.lens.ob_size):
+                obj_addr = items_array[i]
+                actual_value = self.pull_data_from_address(obj_addr)
+                _, item_type_name = self._get_type_info(obj_addr)
+                print(
+                    f"  Item {i}"
+                    f" | Addr: {hex(obj_addr)}"
+                    f" | {item_type_name.ljust(5)}: {actual_value}"
+                )
+
+    def dump_raw(self, addr: int, length: int = 64, label: str = "MEMORY") -> None:
+        """Display hex dump of memory with ASCII representation."""
+        print(f"\n--- DEBUG DUMP: {label} AT {hex(addr)} ---")
+>>>>>>> test-ruleset-workflow
         try:
             raw_data = ctypes.string_at(addr, length)
             for i in range(0, length, 16):
                 chunk = raw_data[i : i + 16]
                 hex_vals = " ".join(f"{b:02x}" for b in chunk).ljust(47)
                 ascii_vals = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+<<<<<<< HEAD
                 print(f"    +{i:02x}  {hex_vals} {ascii_vals}")
+=======
+                print(f"{offset} | {hex_vals} | {ascii_vals}")
+>>>>>>> test-ruleset-workflow
         except Exception as e:
             print(f"    FAILED TO READ: {e}")
 
@@ -906,12 +1227,23 @@ class Pointer:
     def examine(self) -> None:
         """Comprehensive examination of Python object memory structure."""
         total_size = sys.getsizeof(self._target)
+<<<<<<< HEAD
         dump_size = min(total_size, 64)
+=======
+        dump_size = min(total_size, 256)
+>>>>>>> test-ruleset-workflow
         raw_bytes = ctypes.string_at(self.address, dump_size)
 
         print(f"\n  X-RAY {hex(self.address)} type={self.type_name} size={total_size}B")
         print(f"  refcnt={self.header.ob_refcnt}  type_ptr={hex(self.header.ob_type_ptr)}")
 
+<<<<<<< HEAD
+=======
+        print("[ HEADER ]")
+        print(f"  +00 | ob_refcnt : {self.header.ob_refcnt}")
+        print(f"  +08 | ob_type   : {hex(self.header.ob_type_ptr)}")
+
+>>>>>>> test-ruleset-workflow
         dispatch = {
             "list": self._examine_list,
             "dict": self._examine_dict,

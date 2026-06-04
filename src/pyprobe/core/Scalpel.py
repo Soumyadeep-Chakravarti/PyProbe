@@ -11,11 +11,12 @@ import types
 import gc
 import sys
 from contextlib import contextmanager
-from typing import Any, Tuple, cast
+from typing import Tuple, Any
 
 from pyprobe.core.offset_discovery import (
     LIST_ITEMS_OFFSET,
-    DICT_LAYOUT,
+    DICT_MA_KEYS_OFFSET,
+    DICT_ENTRY_SIZE,
     STR_DATA_OFFSET
 )
 
@@ -97,7 +98,7 @@ def is_safe_to_mutate(obj: Any, stack_depth: int = 3) -> Tuple[bool, str]:
     # GC threshold check — collect if needed before mutation
     if gc.isenabled() and gc.get_threshold()[0] > 0:
         if gc.get_count()[0] > gc.get_threshold()[0]:
-            _ = gc.collect()
+            gc.collect()
 
     return True, "Safe"
 
@@ -220,9 +221,10 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
     list_addr    = id(target_list)
     new_obj_addr = id(new_obj)
 
-    ob_item_ptr = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
+    ob_item_ptr: int | None = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
     if ob_item_ptr is None:
-        raise RuntimeError("Could not locate list item pointer in memory.")
+        raise RuntimeError("Could not locate list item storage in memory.")
+
     target_slot_addr: int = ob_item_ptr + (index * 8)
 
     with gc_suspended():
@@ -252,22 +254,24 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
     if key not in target_dict:
         raise KeyError(f"Key '{key}' not found.")
 
-    dict_layout = DICT_LAYOUT
-    if dict_layout is None:
-        raise RuntimeError("Dictionary layout offsets are unavailable.")
-
     d_addr       = id(target_dict)
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
-    ma_keys_ptr = ctypes.c_void_p.from_address(
-        d_addr + cast(int, dict_layout["ma_keys_offset"])
+    if DICT_MA_KEYS_OFFSET is None or DICT_ENTRY_SIZE is None:
+        raise RuntimeError("Dict layout offsets were not discovered.")
+
+    ma_keys_offset: int = DICT_MA_KEYS_OFFSET
+    entry_size: int = DICT_ENTRY_SIZE
+
+    ma_keys_ptr: int | None = ctypes.c_void_p.from_address(
+        d_addr + ma_keys_offset
     ).value
     if ma_keys_ptr is None:
-        raise RuntimeError("Could not locate dict keys pointer in memory.")
+        raise RuntimeError("Could not locate dict key storage in memory.")
 
     # Scan for old value pointer
-    scan_limit = len(target_dict) * cast(int, dict_layout["entry_size"]) * 4
+    scan_limit: int = len(target_dict) * entry_size * 4
     target_slot_addr: int | None = None
 
     for offset in range(0, scan_limit, 8):
@@ -282,11 +286,9 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
     if target_slot_addr is None:
         raise RuntimeError("Could not locate value pointer in memory.")
 
-    slot_addr = target_slot_addr
-
     with gc_suspended():
         ctypes.c_ssize_t.from_address(new_obj_addr).value += 1               # INCREF new
-        ctypes.c_void_p.from_address(slot_addr).value = new_obj_addr  # SWAP
+        ctypes.c_void_p.from_address(target_slot_addr).value = new_obj_addr  # SWAP
         ctypes.c_ssize_t.from_address(old_val_id).value -= 1                 # DECREF old
 
 
@@ -340,6 +342,11 @@ def mutate_str(target_str: str, new_str: str) -> None:
 
     addr = id(target_str)
 
+    if STR_DATA_OFFSET is None:
+        raise RuntimeError("String data offset was not discovered.")
+
+    data_offset: int = STR_DATA_OFFSET
+
     # State validation (ensure it is Compact ASCII and not interned)
     state_flags = ctypes.c_uint32.from_address(addr + 32).value
     if (state_flags & 0x03) != 0:
@@ -348,8 +355,8 @@ def mutate_str(target_str: str, new_str: str) -> None:
         raise TypeError("Unsupported encoding. Scalpel only mutates Compact ASCII.")
 
     with gc_suspended():
-        target_buffer = addr + STR_DATA_OFFSET
-        source_buffer = id(new_str) + STR_DATA_OFFSET
+        target_buffer: int = addr + data_offset
+        source_buffer: int = id(new_str) + data_offset
         ctypes.memmove(target_buffer, source_buffer, len(target_str))
         
         # Reset the cached hash

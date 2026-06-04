@@ -2,7 +2,7 @@
 
 import os
 import sys
-from typing import Any
+from typing import Any, Dict, Union
 
 sys.path.insert(0, os.path.abspath("src"))
 
@@ -20,8 +20,8 @@ def showcase() -> None:
     p2: float = 3.14159  # Float
     p3: str = "🙂🐍🔥"  # UCS-4 String
     p4: bytes = b"binary\x00data"  # Bytes
-    for item in [p1, p2, p3, p4]:
-        print(f"The Item: {item}")
+    primitives: list[Union[int, float, str, bytes]] = [p1, p2, p3, p4]
+    for item in primitives:
         pin(item).examine()
 
     # 2. Collections (Graph Inspection)
@@ -39,7 +39,7 @@ def showcase() -> None:
         def __init__(self, name: str, age: int) -> None:
             self.name: str = name
             self.age: int = age
-            self.preferences: dict[str, Any] = {"theme": "dark", "notifications": True}
+            self.preferences: Dict[str, Union[str, bool]] = {"theme": "dark", "notifications": True}
 
     user = UserProfile("Alice", 30)
     pin(user.__dict__).examine()

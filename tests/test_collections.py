@@ -7,7 +7,7 @@ from pyprobe import pin
 
 class TestCollections(unittest.TestCase):
     def test_list_tuple(self):
-        cases = [
+        cases: list[object] = [
             [1, 2, 3],
             (1, 2, 3),
             [1, (2, 3), [4, 5]],
@@ -20,7 +20,7 @@ class TestCollections(unittest.TestCase):
             self.assertEqual(val, c, f"Failed for collection: {repr(c)}")
 
     def test_dict_simple(self):
-        cases = [
+        cases: list[object] = [
             {"a": 1, "b": 2},
             {1: "a", 2.5: "b", (1,2): "c"},
             {}, # Empty dict
@@ -40,7 +40,7 @@ class TestCollections(unittest.TestCase):
         self.assertEqual(val, d, "Failed for dict with deletions (tombstones).")
 
     def test_sets(self):
-        cases = [
+        cases: list[object] = [
             {1, 2, 3},
             {"a", "b", "c"},
             frozenset([1, 2, 3]),

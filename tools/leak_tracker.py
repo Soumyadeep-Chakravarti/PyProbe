@@ -8,11 +8,19 @@ sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
 
 class RefCountTracker:
+<<<<<<< HEAD
     def __init__(self, obj: Any) -> None:
         self._target: Any = obj
         self._addr: int = id(obj)
         self._initial_refcnt: int = pin(obj).header.ob_refcnt
         self._history: list[tuple[float, int]] = [(0, self._initial_refcnt)]
+=======
+    def __init__(self, obj: object):
+        self._target: object = obj
+        self._addr = id(obj)
+        self._initial_refcnt = pin(obj).header.ob_refcnt
+        self._history: list[tuple[float, int]] = [(0.0, self._initial_refcnt)]
+>>>>>>> test-ruleset-workflow
 
     def snapshot(self, label: str = "") -> None:
         # We need to manually read the refcnt from the address
@@ -39,13 +47,21 @@ class RefCountTracker:
 def test_leak_tracking() -> None:
     # Setup
     print("Initializing Leak Tracker...")
+<<<<<<< HEAD
     data: dict[str, Any] = {"secret": "data"}
+=======
+    data: dict[str, object] = {"secret": "data"}
+>>>>>>> test-ruleset-workflow
     tracker = RefCountTracker(data)
     tracker.snapshot("Initial")
 
     # Simulate leaks
     print("\nAdding to global leak list...")
+<<<<<<< HEAD
     leak_list: list[Any] = []
+=======
+    leak_list: list[object] = []
+>>>>>>> test-ruleset-workflow
     leak_list.append(data)
     tracker.snapshot("After Link")
 

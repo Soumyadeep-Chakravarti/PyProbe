@@ -9,7 +9,7 @@ def debug_dict_crash():
     print(pin(d1).pull_data_from_address(id(d1)))
 
     print("\nCase 2: Mixed keys (Manual iteration)")
-    d2 = {1: "a", 2.5: "b", (1,2): "c"}
+    d2: dict[object, str] = {1: "a", 2.5: "b", (1,2): "c"}
     p = pin(d2)
     addr = id(d2)
     
