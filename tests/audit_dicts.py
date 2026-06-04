@@ -1,4 +1,8 @@
 import ctypes
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 
 def get_keys_header(d: dict[int, int]) -> bytes:
     keys_addr = ctypes.c_void_p.from_address(id(d) + 32).value

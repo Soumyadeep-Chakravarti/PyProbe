@@ -1,4 +1,8 @@
 import ctypes
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 
 # Look at dict memory structure directly
 d = {"a": 1}
