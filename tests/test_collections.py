@@ -52,4 +52,4 @@ class TestCollections(unittest.TestCase):
             self.assertEqual(val, c, f"Failed for set/frozenset: {repr(c)}")
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

@@ -1,8 +1,9 @@
 import ctypes
 
 class Node:
-    x: int
-    y: int
+    def __init__(self):
+        self.x = 0
+        self.y = 0
 
 n = Node()
 n.x = 10
