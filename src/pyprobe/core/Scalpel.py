@@ -97,7 +97,7 @@ def is_safe_to_mutate(obj: Any, stack_depth: int = 3) -> Tuple[bool, str]:
     # GC threshold check — collect if needed before mutation
     if gc.isenabled() and gc.get_threshold()[0] > 0:
         if gc.get_count()[0] > gc.get_threshold()[0]:
-            gc.collect()
+            _ = gc.collect()
 
     return True, "Safe"
 
@@ -161,7 +161,7 @@ def mutate_int(target_int: int, new_value: int) -> None:
         current_capacity = abs(ob_size_ptr.value)
 
     # Calculate digits needed for new value
-    new_digits = []
+    new_digits: list[int] = []
     temp = abs(new_value)
     while temp > 0:
         new_digits.append(temp & MASK)
@@ -175,13 +175,16 @@ def mutate_int(target_int: int, new_value: int) -> None:
             f"but {new_value} requires {required_capacity}."
         )
 
-    # Encode new size/tag
+    # Encode new size/tag (CPython 3.12+ lv_tag)
+    # lv_tag = (digit_count << 3) | sign_tag | interned_bit
+    #   sign_tag:  positive=0, zero=1, negative=2
+    #   interned_bit: bit 2 (value 4), set for cached small ints
     if sys.version_info >= (3, 12):
         if new_value == 0:
-            new_ob_size = 0
+            new_ob_size = 5  # (0 << 3) | 1  — zero is always cached
         else:
-            sign_bit    = 1 if new_value > 0 else 2
-            new_ob_size = (required_capacity << 3) | sign_bit
+            sign_tag = 0 if new_value > 0 else 2
+            new_ob_size = (required_capacity << 3) | sign_tag
     else:
         if new_value == 0:
             new_ob_size = 0
@@ -199,7 +202,7 @@ def mutate_int(target_int: int, new_value: int) -> None:
                 digit_array[i] = digit
 
 
-def safe_list_swap(target_list: list, index: int, new_obj: Any) -> None:
+def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
     """
     Replace a list item by hot-swapping the memory pointer.
 
@@ -221,6 +224,7 @@ def safe_list_swap(target_list: list, index: int, new_obj: Any) -> None:
     new_obj_addr = id(new_obj)
 
     ob_item_ptr      = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
+    assert ob_item_ptr is not None
     target_slot_addr = ob_item_ptr + (index * 8)
 
     with gc_suspended():
@@ -231,7 +235,7 @@ def safe_list_swap(target_list: list, index: int, new_obj: Any) -> None:
             ctypes.c_ssize_t.from_address(old_obj_ptr).value -= 1            # DECREF old
 
 
-def safe_dict_value_swap(target_dict: dict, key: Any, new_value: Any) -> None:
+def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) -> None:
     """
     Find value pointer for a dict key and hot-swap it.
 
@@ -254,9 +258,11 @@ def safe_dict_value_swap(target_dict: dict, key: Any, new_value: Any) -> None:
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
+    assert DICT_LAYOUT is not None
     ma_keys_ptr = ctypes.c_void_p.from_address(
         d_addr + DICT_LAYOUT["ma_keys_offset"]
     ).value
+    assert ma_keys_ptr is not None
 
     entry_size  = DICT_LAYOUT["entry_size"]
     scan_limit  = len(target_dict) * entry_size * 4
@@ -314,7 +320,7 @@ def mutate_bytes(target_bytes: bytes, new_bytes: bytes) -> None:
         # Overwrite the raw memory block using ctypes.memmove
         target_buffer = addr + BYTES_VAL_OFFSET
         source_buffer = id(new_bytes) + BYTES_VAL_OFFSET
-        ctypes.memmove(target_buffer, source_buffer, len(target_bytes))
+        _ = ctypes.memmove(target_buffer, source_buffer, len(target_bytes))
         
         # Invalidate the cached hash by setting it to -1 (so dicts don't break)
         ctypes.c_ssize_t.from_address(addr + 24).value = -1
@@ -349,7 +355,7 @@ def mutate_str(target_str: str, new_str: str) -> None:
     with gc_suspended():
         target_buffer: int = addr + data_offset
         source_buffer: int = id(new_str) + data_offset
-        ctypes.memmove(target_buffer, source_buffer, len(target_str))
+        _ = ctypes.memmove(target_buffer, source_buffer, len(target_str))
         
         # Reset the cached hash
         ctypes.c_ssize_t.from_address(addr + 24).value = -1

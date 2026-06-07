@@ -25,8 +25,7 @@ from pyprobe.raw.lenses.tuple_lens import TupleLens
 from pyprobe.core.offset_discovery import (
     TUPLE_ITEMS_OFFSET,
     LIST_ITEMS_OFFSET,
-    DICT_LAYOUT,
-    DICT_MA_KEYS_OFFSET,  # type: ignore[attr-defined]
+    DICT_MA_KEYS_OFFSET,
 )
 
 # Type aliases
@@ -705,15 +704,13 @@ class Pointer:
         """Mutate a small int at a given address."""
         Scalpel.mutate_int(target_addr, new_val)
 
-    def safe_list_swap(self, src_addr: int, tgt_addr: int) -> None:
-        """Swap two list item pointers."""
-        Scalpel.safe_list_swap(src_addr, tgt_addr)
+    def safe_list_swap(self, target_list: list[Any], index: int, new_obj: Any) -> None:
+        """Swap a list item by hot-swapping the memory pointer."""
+        Scalpel.safe_list_swap(target_list, index, new_obj)
 
-    def safe_dict_value_swap(self, target_dict: dict, key: object, new_addr: int) -> None:
-        """Swap a dict value pointer (inlined from Scalpel)."""
-        ma_keys_offset = DICT_LAYOUT["ma_keys_offset"]
-        entry_size = DICT_LAYOUT["entry_size"]
-        Scalpel.safe_dict_value_swap(target_dict, key, new_addr, ma_keys_offset, entry_size)
+    def safe_dict_value_swap(self, target_dict: dict[Any, Any], key: object, new_addr: int) -> None:
+        """Swap a dict value pointer."""
+        Scalpel.safe_dict_value_swap(target_dict, key, new_addr)
 
     def __repr__(self) -> str:
         """Return a developer-friendly representation of the Pointer."""

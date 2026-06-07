@@ -1,8 +1,9 @@
 import ctypes
 import os
+from typing import Any, Optional
 
 
-def is_readable_ptr(ptr) -> bool:
+def is_readable_ptr(ptr: int | None) -> bool:
     """
     Check if pointer is readable without causing a hard OS-level crash.
     """
@@ -29,7 +30,7 @@ def is_readable_ptr(ptr) -> bool:
         return False
 
 
-def _discover_offset(obj, known_values) -> int:
+def _discover_offset(obj: Any, known_values: list[Any]) -> int:
     """
     Dynamically discover the offset of fields in any Python object
     by scanning raw RAM bytes.
@@ -85,6 +86,7 @@ def _discover_list_items_offset() -> int:
 
         if not is_readable_ptr(ob_item_ptr):
             continue
+        assert isinstance(ob_item_ptr, int)
 
         try:
             p0 = ctypes.c_void_p.from_address(ob_item_ptr).value
@@ -145,7 +147,7 @@ def _discover_str_data_offset() -> int:
     raise RuntimeError("Could not discover string data offset!")
 
 
-def _discover_dict_entry_layout() -> dict:
+def _discover_dict_entry_layout() -> dict[str, int]:
     """
     Discover dict internal layout from RAM bytes.
     No hardcoding, no version checks.
@@ -168,6 +170,7 @@ def _discover_dict_entry_layout() -> dict:
 
         if not is_readable_ptr(ptr):
             continue
+        assert isinstance(ptr, int)
 
         # Try to find v1 inside this pointer
         for inner in range(0, 200, 8):
@@ -190,6 +193,7 @@ def _discover_dict_entry_layout() -> dict:
 
     if ma_keys_ptr is None or v1_offset_in_keys is None:
         raise RuntimeError("Could not find ma_keys or v1!")
+    assert isinstance(ma_keys_offset, int)
 
     # Step 2: Find v2 offset inside ma_keys
     v2_offset_in_keys = None
@@ -218,7 +222,7 @@ def _discover_dict_entry_layout() -> dict:
     }
 
 
-def _fmt_offset(val):
+def _fmt_offset(val: Optional[int]) -> str:
     return f"+{val}" if val is not None else "None"
 
 
@@ -227,39 +231,41 @@ def _fmt_offset(val):
 # ──────────────────────────────────────────────────────
 
 print("Testing tuple...")
-TUPLE_ITEMS_OFFSET = _discover_tuple_items_offset()
+TUPLE_ITEMS_OFFSET: int = _discover_tuple_items_offset()
 print(f"Tuple OK: {_fmt_offset(TUPLE_ITEMS_OFFSET)}")
 
 print("Testing list...")
-LIST_ITEMS_OFFSET = _discover_list_items_offset()
+LIST_ITEMS_OFFSET: int = _discover_list_items_offset()
 print(f"List OK: {_fmt_offset(LIST_ITEMS_OFFSET)}")
 
 print("Testing set...")
-SET_ITEMS_OFFSET = _discover_set_items_offset()
+SET_ITEMS_OFFSET: int = _discover_set_items_offset()
 print(f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
 
 print("Testing dict...")
 try:
-    DICT_LAYOUT = _discover_dict_entry_layout()
-    print(f"Dict OK: {DICT_LAYOUT}")
+    _discovered_layout = _discover_dict_entry_layout()
+    print(f"Dict OK: {_discovered_layout}")
 except Exception as e:
     print(f"Dict FAILED: {e}")
-    DICT_LAYOUT = None
+    _discovered_layout = None
+DICT_LAYOUT: Optional[dict[str, int]] = _discovered_layout
 
 print("Testing str...")
 try:
-    STR_DATA_OFFSET = _discover_str_data_offset()
-    print(f"Str OK: {_fmt_offset(STR_DATA_OFFSET)}")
+    _discovered_str_offset = _discover_str_data_offset()
+    print(f"Str OK: {_fmt_offset(_discovered_str_offset)}")
 except Exception as e:
     print(f"Str FAILED: {e}")
-    STR_DATA_OFFSET = None
+    _discovered_str_offset = None
+STR_DATA_OFFSET: Optional[int] = _discovered_str_offset
 
 # ──────────────────────────────────────────────────────
 # Convenience variables
 # ──────────────────────────────────────────────────────
-DICT_MA_KEYS_OFFSET = DICT_LAYOUT["ma_keys_offset"] if DICT_LAYOUT else None
-DICT_FIRST_VAL_OFFSET = DICT_LAYOUT["first_value_offset"] if DICT_LAYOUT else None
-DICT_ENTRY_SIZE = DICT_LAYOUT["entry_size"] if DICT_LAYOUT else None
+DICT_MA_KEYS_OFFSET: Optional[int] = DICT_LAYOUT["ma_keys_offset"] if DICT_LAYOUT else None
+DICT_FIRST_VAL_OFFSET: Optional[int] = DICT_LAYOUT["first_value_offset"] if DICT_LAYOUT else None
+DICT_ENTRY_SIZE: Optional[int] = DICT_LAYOUT["entry_size"] if DICT_LAYOUT else None
 
 
 if __name__ == "__main__":
