@@ -3,6 +3,7 @@
 High-speed memory introspection for CPython 3.14.
 """
 
+import builtins
 import ctypes
 import sys
 import warnings
@@ -56,20 +57,23 @@ def _get_dummy_ptr() -> Optional[int]:
     global _dummy_ptr_cache
     if _dummy_ptr_cache is None:
         try:
-            # We locate it via a temporary dict tombstone
             d = {0: 0}
             del d[0]
             addr = id(d)
-            # ── CHANGE 4: Use discovered offset instead of hardcoded +32 ──
             if DICT_MA_KEYS_OFFSET is not None:
-                keys_addr: Optional[int] = ctypes.c_void_p.from_address(addr + DICT_MA_KEYS_OFFSET).value
-                # In 3.14, indices start at +32.
-                # Entry 0 key starts at +32 + indices_size + hash_offset
-                # For size 8, indices size is 8.
-                # General dict has hash(8) before key
-                # Total offset: 32 + 8 + 8 = 48.
+                keys_addr: Optional[int] = ctypes.c_void_p.from_address(
+                    addr + DICT_MA_KEYS_OFFSET
+                ).value
                 if keys_addr is not None:
-                    _dummy_ptr_cache = ctypes.c_void_p.from_address(keys_addr + 48).value
+                    keys_lens = DictKeysLens.from_address(keys_addr)
+                    dk_kind = keys_lens.dk_kind
+                    is_unicode = dk_kind == 1
+                    log2_ix = keys_lens.dk_log2_index_bytes
+                    entries_start = 32 + (1 << log2_ix)
+                    key_offset = 0 if is_unicode else 8
+                    _dummy_ptr_cache = ctypes.c_void_p.from_address(
+                        keys_addr + entries_start + key_offset
+                    ).value
         except Exception as e:
             warnings.warn(
                 f"Failed to locate <dummy> singleton: {e}. "
@@ -83,6 +87,13 @@ def _get_dummy_ptr() -> Optional[int]:
 # Architecture Guard
 if ctypes.sizeof(ctypes.c_void_p) != 8:
     raise RuntimeError("PyProbe currently only supports 64-bit CPython architectures.")
+
+# Pre-compute the set of all builtin exception type names for dynamic matching
+_EXCEPTION_NAMES: set[str] = set()
+for _name in dir(builtins):
+    _obj = getattr(builtins, _name, None)
+    if isinstance(_obj, type) and issubclass(_obj, BaseException):
+        _EXCEPTION_NAMES.add(_name)
 
 # Cached lookups for performance
 _TYPE_NAME_CACHE: Dict[int, str] = {}
@@ -145,31 +156,50 @@ class Pointer:
             "enumerate": self._extract_enumerate,
             "BaseException": self._extract_exception,
             "Exception": self._extract_exception,
-            "ValueError": self._extract_exception,
-            "TypeError": self._extract_exception,
-            "KeyError": self._extract_exception,
-            "IndexError": self._extract_exception,
-            "AttributeError": self._extract_exception,
-            "RuntimeError": self._extract_exception,
             "StopIteration": self._extract_exception,
-            "OSError": self._extract_exception,
-            "ImportError": self._extract_exception,
-            "NameError": self._extract_exception,
-            "ZeroDivisionError": self._extract_exception,
-            "FileNotFoundError": self._extract_exception,
-            "FileExistsError": self._extract_exception,
-            "PermissionError": self._extract_exception,
-            "IsADirectoryError": self._extract_exception,
-            "NotADirectoryError": self._extract_exception,
-            "TimeoutError": self._extract_exception,
-            "ConnectionError": self._extract_exception,
-            "BrokenPipeError": self._extract_exception,
+            "ArithmeticError": self._extract_exception,
             "AssertionError": self._extract_exception,
+            "AttributeError": self._extract_exception,
+            "BlockingIOError": self._extract_exception,
+            "BrokenPipeError": self._extract_exception,
+            "ConnectionError": self._extract_exception,
+            "EOFError": self._extract_exception,
+            "FileExistsError": self._extract_exception,
+            "FileNotFoundError": self._extract_exception,
+            "FloatingPointError": self._extract_exception,
+            "GeneratorExit": self._extract_exception,
+            "IOError": self._extract_exception,
+            "ImportError": self._extract_exception,
+            "IndentationError": self._extract_exception,
+            "IndexError": self._extract_exception,
+            "IsADirectoryError": self._extract_exception,
+            "KeyError": self._extract_exception,
             "LookupError": self._extract_exception,
-            "SyntaxError": self._extract_exception,
+            "MemoryError": self._extract_exception,
             "ModuleNotFoundError": self._extract_exception,
-            "UnboundLocalError": self._extract_exception,
+            "NameError": self._extract_exception,
+            "NotADirectoryError": self._extract_exception,
+            "NotImplementedError": self._extract_exception,
+            "OSError": self._extract_exception,
+            "OverflowError": self._extract_exception,
+            "PermissionError": self._extract_exception,
+            "ProcessLookupError": self._extract_exception,
             "RecursionError": self._extract_exception,
+            "ReferenceError": self._extract_exception,
+            "RuntimeError": self._extract_exception,
+            "SyntaxError": self._extract_exception,
+            "SystemError": self._extract_exception,
+            "SystemExit": self._extract_exception,
+            "TabError": self._extract_exception,
+            "TimeoutError": self._extract_exception,
+            "TypeError": self._extract_exception,
+            "UnboundLocalError": self._extract_exception,
+            "UnicodeDecodeError": self._extract_exception,
+            "UnicodeEncodeError": self._extract_exception,
+            "UnicodeError": self._extract_exception,
+            "UnicodeTranslateError": self._extract_exception,
+            "ValueError": self._extract_exception,
+            "ZeroDivisionError": self._extract_exception,
         }
 
         self.lens = self._get_lens()
@@ -271,7 +301,7 @@ class Pointer:
 
     def _extract_int(self, addr: int) -> int:
         """Extract integer value (PyLongObject)."""
-        tag = ctypes.c_size_t.from_address(addr + HEADER_SIZE).value
+        tag = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         size = tag >> 3
         if size == 0:
             return 0
@@ -644,21 +674,18 @@ class Pointer:
         try:
             _, type_name = self._get_type_info(actual_addr)
 
-            is_container = (
-                type_name in [
-                    "list", "tuple", "dict", "set", "frozenset", "range",
-                    "slice", "function", "module", "cell", "property",
-                    "staticmethod", "classmethod", "generator", "enumerate",
-                ]
-                or type_name in self._extractors
-                and "Exception" in type_name
-            )
-            if is_container:
+            is_container = type_name in [
+                "list", "tuple", "dict", "set", "frozenset", "range",
+                "slice", "function", "module", "cell", "property",
+                "staticmethod", "classmethod", "generator", "enumerate",
+            ]
+            is_exception = type_name in _EXCEPTION_NAMES
+            if is_container or is_exception:
                 visited.add(actual_addr)
 
             extractor = self._extractors.get(type_name)
             if extractor:
-                if is_container:
+                if is_container or is_exception:
                     return extractor(actual_addr, visited, depth)
                 return extractor(actual_addr)
 

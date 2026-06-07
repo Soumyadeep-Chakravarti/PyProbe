@@ -258,14 +258,19 @@ def safe_dict_value_swap(target_dict: dict, key: Any, new_value: Any) -> None:
         d_addr + DICT_LAYOUT["ma_keys_offset"]
     ).value
 
-    scan_limit       = len(target_dict) * DICT_LAYOUT["entry_size"] * 4
+    entry_size  = DICT_LAYOUT["entry_size"]
+    scan_limit  = len(target_dict) * entry_size * 4
     target_slot_addr = None
 
     for offset in range(0, scan_limit, 8):
         try:
             ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
             if ptr == old_val_id:
-                target_slot_addr = ma_keys_ptr + offset
+                candidate = ma_keys_ptr + offset
+                # Validation: reject kernel addresses, null, and unaligned pointers
+                if candidate < 0x1000 or candidate & 7:
+                    continue
+                target_slot_addr = candidate
                 break
         except Exception:
             pass
