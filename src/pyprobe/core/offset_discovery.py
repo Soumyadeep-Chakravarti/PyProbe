@@ -1,9 +1,8 @@
 import ctypes
 import os
-from typing import Any, Dict, Optional, List
 
 
-def is_readable_ptr(ptr: Any) -> bool:
+def is_readable_ptr(ptr) -> bool:
     """
     Check if pointer is readable without causing a hard OS-level crash.
     """
@@ -12,7 +11,7 @@ def is_readable_ptr(ptr: Any) -> bool:
     if not isinstance(ptr, int) or ptr < 0x10000:
         return False
 
-    # 2. On Windows, dereferencing invalid high memory STILL causes an Access 
+    # 2. On Windows, dereferencing invalid high memory STILL causes an Access
     # Violation that bypasses Python's try/except. We must use IsBadReadPtr.
     if os.name == 'nt':
         try:
@@ -30,14 +29,14 @@ def is_readable_ptr(ptr: Any) -> bool:
         return False
 
 
-def _discover_offset(obj: Any, known_values: List[Any]) -> int:
+def _discover_offset(obj, known_values) -> int:
     """
     Dynamically discover the offset of fields in any Python object
     by scanning raw RAM bytes.
     No hardcoding, no version checks.
     """
-    obj_addr: int = id(obj)
-    expected: List[int] = [id(v) for v in known_values]
+    obj_addr = id(obj)
+    expected = [id(v) for v in known_values]
 
     for offset in range(16, 128, 8):
         match = True
@@ -80,17 +79,17 @@ def _discover_list_items_offset() -> int:
     expected = [id(s1), id(s2), id(s3)]
 
     for offset in range(16, 64, 8):
-        ob_item_ptr: Optional[int] = ctypes.c_void_p.from_address(
+        ob_item_ptr = ctypes.c_void_p.from_address(
             lst_addr + offset
         ).value
 
-        if not ob_item_ptr or not is_readable_ptr(ob_item_ptr):
+        if not is_readable_ptr(ob_item_ptr):
             continue
 
         try:
-            p0: Optional[int] = ctypes.c_void_p.from_address(ob_item_ptr).value
-            p1: Optional[int] = ctypes.c_void_p.from_address(ob_item_ptr + 8).value
-            p2: Optional[int] = ctypes.c_void_p.from_address(ob_item_ptr + 16).value
+            p0 = ctypes.c_void_p.from_address(ob_item_ptr).value
+            p1 = ctypes.c_void_p.from_address(ob_item_ptr + 8).value
+            p2 = ctypes.c_void_p.from_address(ob_item_ptr + 16).value
 
             if p0 == expected[0] and p1 == expected[1] and p2 == expected[2]:
                 return offset
@@ -146,26 +145,26 @@ def _discover_str_data_offset() -> int:
     raise RuntimeError("Could not discover string data offset!")
 
 
-def _discover_dict_entry_layout() -> Dict[str, int]:
+def _discover_dict_entry_layout() -> dict:
     """
     Discover dict internal layout from RAM bytes.
     No hardcoding, no version checks.
     """
-    v1: int = 4000001
-    v2: int = 4000002
-    d: Dict[int, int] = {"key1": v1, "key2": v2}  # type: ignore[dict-item]
+    v1 = 4000001
+    v2 = 4000002
+    d = {"key1": v1, "key2": v2}
 
-    d_addr: int = id(d)
-    expected_v1: int = id(v1)
-    expected_v2: int = id(v2)
+    d_addr = id(d)
+    expected_v1 = id(v1)
+    expected_v2 = id(v2)
 
-    ma_keys_ptr: Optional[int] = None
-    ma_keys_offset: Optional[int] = None
-    v1_offset_in_keys: Optional[int] = None
+    ma_keys_ptr = None
+    ma_keys_offset = None
+    v1_offset_in_keys = None
 
     # Step 1: Find ma_keys pointer in dict struct
     for offset in range(16, 64, 8):
-        ptr: Optional[int] = ctypes.c_void_p.from_address(d_addr + offset).value
+        ptr = ctypes.c_void_p.from_address(d_addr + offset).value
 
         if not is_readable_ptr(ptr):
             continue
@@ -173,10 +172,10 @@ def _discover_dict_entry_layout() -> Dict[str, int]:
         # Try to find v1 inside this pointer
         for inner in range(0, 200, 8):
             try:
-                if not is_readable_ptr(ptr + inner):  # type: ignore[operator]
+                if not is_readable_ptr(ptr + inner):
                     continue
-                val: Optional[int] = ctypes.c_void_p.from_address(
-                    ptr + inner  # type: ignore[operator]
+                val = ctypes.c_void_p.from_address(
+                    ptr + inner
                 ).value
                 if val == expected_v1:
                     ma_keys_ptr = ptr
@@ -193,15 +192,15 @@ def _discover_dict_entry_layout() -> Dict[str, int]:
         raise RuntimeError("Could not find ma_keys or v1!")
 
     # Step 2: Find v2 offset inside ma_keys
-    v2_offset_in_keys: Optional[int] = None
+    v2_offset_in_keys = None
     for inner in range(0, 200, 8):
         try:
-            if not is_readable_ptr(ma_keys_ptr + inner):  # type: ignore[operator]
+            if not is_readable_ptr(ma_keys_ptr + inner):
                 continue
-            val_v2: Optional[int] = ctypes.c_void_p.from_address(
-                ma_keys_ptr + inner  # type: ignore[operator]
+            val = ctypes.c_void_p.from_address(
+                ma_keys_ptr + inner
             ).value
-            if val_v2 == expected_v2:
+            if val == expected_v2:
                 v2_offset_in_keys = inner
                 break
         except Exception:
@@ -210,17 +209,16 @@ def _discover_dict_entry_layout() -> Dict[str, int]:
     if v2_offset_in_keys is None:
         raise RuntimeError("Could not find v2 in ma_keys!")
 
-    entry_size: int = v2_offset_in_keys - v1_offset_in_keys
+    entry_size = v2_offset_in_keys - v1_offset_in_keys
 
-    # At this point all values are guaranteed to be non-None due to checks above
     return {
-        "ma_keys_offset": ma_keys_offset,  # type: ignore[dict-item]
-        "first_value_offset": v1_offset_in_keys,  # type: ignore[dict-item]
+        "ma_keys_offset": ma_keys_offset,
+        "first_value_offset": v1_offset_in_keys,
         "entry_size": entry_size
     }
 
 
-def _fmt_offset(val: Optional[int]) -> str:
+def _fmt_offset(val):
     return f"+{val}" if val is not None else "None"
 
 
@@ -229,40 +227,39 @@ def _fmt_offset(val: Optional[int]) -> str:
 # ──────────────────────────────────────────────────────
 
 print("Testing tuple...")
-TUPLE_ITEMS_OFFSET: int = _discover_tuple_items_offset()
+TUPLE_ITEMS_OFFSET = _discover_tuple_items_offset()
 print(f"Tuple OK: {_fmt_offset(TUPLE_ITEMS_OFFSET)}")
 
 print("Testing list...")
-LIST_ITEMS_OFFSET: int = _discover_list_items_offset()
+LIST_ITEMS_OFFSET = _discover_list_items_offset()
 print(f"List OK: {_fmt_offset(LIST_ITEMS_OFFSET)}")
 
 print("Testing set...")
-SET_ITEMS_OFFSET: int = _discover_set_items_offset()
+SET_ITEMS_OFFSET = _discover_set_items_offset()
 print(f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
 
 print("Testing dict...")
 try:
-    _dict_layout: Optional[Dict[str, int]] = _discover_dict_entry_layout()
-    print(f"Dict OK: {_dict_layout}")
+    DICT_LAYOUT = _discover_dict_entry_layout()
+    print(f"Dict OK: {DICT_LAYOUT}")
 except Exception as e:
     print(f"Dict FAILED: {e}")
-    _dict_layout = None
+    DICT_LAYOUT = None
 
 print("Testing str...")
 try:
-    _str_data_offset: Optional[int] = _discover_str_data_offset()
-    print(f"Str OK: {_fmt_offset(_str_data_offset)}")
+    STR_DATA_OFFSET = _discover_str_data_offset()
+    print(f"Str OK: {_fmt_offset(STR_DATA_OFFSET)}")
 except Exception as e:
     print(f"Str FAILED: {e}")
-    _str_data_offset = None
+    STR_DATA_OFFSET = None
 
 # ──────────────────────────────────────────────────────
 # Convenience variables
 # ──────────────────────────────────────────────────────
-DICT_MA_KEYS_OFFSET: Optional[int] = _dict_layout["ma_keys_offset"] if _dict_layout else None
-DICT_FIRST_VAL_OFFSET: Optional[int] = _dict_layout["first_value_offset"] if _dict_layout else None
-DICT_ENTRY_SIZE: Optional[int] = _dict_layout["entry_size"] if _dict_layout else None
-STR_DATA_OFFSET: Optional[int] = _str_data_offset
+DICT_MA_KEYS_OFFSET = DICT_LAYOUT["ma_keys_offset"] if DICT_LAYOUT else None
+DICT_FIRST_VAL_OFFSET = DICT_LAYOUT["first_value_offset"] if DICT_LAYOUT else None
+DICT_ENTRY_SIZE = DICT_LAYOUT["entry_size"] if DICT_LAYOUT else None
 
 
 if __name__ == "__main__":

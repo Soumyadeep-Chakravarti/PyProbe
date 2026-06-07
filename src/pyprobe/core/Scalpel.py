@@ -15,8 +15,7 @@ from typing import Tuple, Any
 
 from pyprobe.core.offset_discovery import (
     LIST_ITEMS_OFFSET,
-    DICT_MA_KEYS_OFFSET,
-    DICT_ENTRY_SIZE,
+    DICT_LAYOUT,
     STR_DATA_OFFSET
 )
 
@@ -258,11 +257,11 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
-    if DICT_MA_KEYS_OFFSET is None or DICT_ENTRY_SIZE is None:
+    if DICT_LAYOUT is None:
         raise RuntimeError("Dict layout offsets were not discovered.")
 
-    ma_keys_offset: int = DICT_MA_KEYS_OFFSET
-    entry_size: int = DICT_ENTRY_SIZE
+    ma_keys_offset: int = DICT_LAYOUT["ma_keys_offset"]
+    entry_size: int = DICT_LAYOUT["entry_size"]
 
     ma_keys_ptr: int | None = ctypes.c_void_p.from_address(
         d_addr + ma_keys_offset
