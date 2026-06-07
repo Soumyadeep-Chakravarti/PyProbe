@@ -161,7 +161,7 @@ def mutate_int(target_int: int, new_value: int) -> None:
         current_capacity = abs(ob_size_ptr.value)
 
     # Calculate digits needed for new value
-    new_digits: list[int] = []
+    new_digits = []
     temp = abs(new_value)
     while temp > 0:
         new_digits.append(temp & MASK)
@@ -199,7 +199,7 @@ def mutate_int(target_int: int, new_value: int) -> None:
                 digit_array[i] = digit
 
 
-def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
+def safe_list_swap(target_list: list, index: int, new_obj: Any) -> None:
     """
     Replace a list item by hot-swapping the memory pointer.
 
@@ -220,11 +220,8 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
     list_addr    = id(target_list)
     new_obj_addr = id(new_obj)
 
-    ob_item_ptr: int | None = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
-    if ob_item_ptr is None:
-        raise RuntimeError("Could not locate list item storage in memory.")
-
-    target_slot_addr: int = ob_item_ptr + (index * 8)
+    ob_item_ptr      = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
+    target_slot_addr = ob_item_ptr + (index * 8)
 
     with gc_suspended():
         old_obj_ptr = ctypes.c_void_p.from_address(target_slot_addr).value
@@ -234,7 +231,7 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
             ctypes.c_ssize_t.from_address(old_obj_ptr).value -= 1            # DECREF old
 
 
-def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) -> None:
+def safe_dict_value_swap(target_dict: dict, key: Any, new_value: Any) -> None:
     """
     Find value pointer for a dict key and hot-swap it.
 
@@ -257,21 +254,12 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
-    if DICT_LAYOUT is None:
-        raise RuntimeError("Dict layout offsets were not discovered.")
-
-    ma_keys_offset: int = DICT_LAYOUT["ma_keys_offset"]
-    entry_size: int = DICT_LAYOUT["entry_size"]
-
-    ma_keys_ptr: int | None = ctypes.c_void_p.from_address(
-        d_addr + ma_keys_offset
+    ma_keys_ptr = ctypes.c_void_p.from_address(
+        d_addr + DICT_LAYOUT["ma_keys_offset"]
     ).value
-    if ma_keys_ptr is None:
-        raise RuntimeError("Could not locate dict key storage in memory.")
 
-    # Scan for old value pointer
-    scan_limit: int = len(target_dict) * entry_size * 4
-    target_slot_addr: int | None = None
+    scan_limit       = len(target_dict) * DICT_LAYOUT["entry_size"] * 4
+    target_slot_addr = None
 
     for offset in range(0, scan_limit, 8):
         try:
@@ -282,7 +270,7 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
         except Exception:
             pass
 
-    if target_slot_addr is None:
+    if not target_slot_addr:
         raise RuntimeError("Could not locate value pointer in memory.")
 
     with gc_suspended():
