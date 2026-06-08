@@ -1,6 +1,13 @@
 from typing import Any
 
 from .core import Pointer
+from .core.common import (
+    PyProbeError,
+    PyProbeIntegrityError,
+    PyProbeSafetyError,
+    PyProbeSecurityError,
+    PyProbeWarning,
+)
 
 
 def pin(obj: Any) -> Pointer:

@@ -15,6 +15,7 @@ from pyprobe.raw.lenses.bytes_lens import BytesLens
 from pyprobe.raw.lenses.dict_lens import DictKeysLens, DictLens
 from pyprobe.raw.lenses.float_lens import FloatLens
 import pyprobe.core.Scalpel as Scalpel
+from pyprobe.core.common import PyProbeError
 from pyprobe.raw.lenses.int_lens import IntLens
 from pyprobe.raw.lenses.list_lens import ListLens
 from pyprobe.raw.lenses.set_lens import SetLens
@@ -85,7 +86,7 @@ def _get_dummy_ptr() -> Optional[int]:
 
 # Architecture Guard
 if ctypes.sizeof(ctypes.c_void_p) != 8:
-    raise RuntimeError("PyProbe currently only supports 64-bit CPython architectures.")
+    raise PyProbeError("PyProbe currently only supports 64-bit CPython architectures.")
 
 # Pre-compute the set of all builtin exception type names for dynamic matching
 _EXCEPTION_NAMES: set[str] = set()

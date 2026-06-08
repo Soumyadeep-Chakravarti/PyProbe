@@ -18,6 +18,12 @@ from pyprobe.core.offset_discovery import (
     DICT_LAYOUT,
     STR_DATA_OFFSET
 )
+from pyprobe.core.common import (
+    PyProbeError,
+    PyProbeIntegrityError,
+    PyProbeSafetyError,
+    PyProbeSecurityError,
+)
 
 # Globally cache the memory addresses of Python's small integers at load time
 SMALL_INT_ADDRS = {id(i) for i in range(-5, 257)}
@@ -109,12 +115,12 @@ def assert_safe(obj: Any, stack_depth: int = 3) -> None:
     """
     safe, reason = is_safe_to_mutate(obj, stack_depth)
     if not safe:
-        raise ValueError(f"Unsafe: {reason}")
+        raise PyProbeSafetyError(f"Unsafe: {reason}")
 
 
 # ── Mutators ───────────────────────────────────────────────────────────────
 
-def mutate_float(target_float: float, new_value: float) -> None:
+def mutate_float(target_float: float, new_value: float, safe: bool = True) -> None:
     """
     Overwrite the underlying C double of a Python float.
 
@@ -123,7 +129,8 @@ def mutate_float(target_float: float, new_value: float) -> None:
         +8  type pointer
         +16 ob_fval (IEEE 754 double) ← we write here
     """
-    assert_safe(target_float, stack_depth=5)
+    if safe:
+        assert_safe(target_float, stack_depth=5)
 
     addr       = id(target_float)
     double_ptr = ctypes.c_double.from_address(addr + 16)
@@ -132,7 +139,7 @@ def mutate_float(target_float: float, new_value: float) -> None:
         double_ptr.value = new_value
 
 
-def mutate_int(target_int: int, new_value: int) -> None:
+def mutate_int(target_int: int, new_value: int, safe: bool = True) -> None:
     """
     Mutate a target integer in-place.
     Handles CPython 3.12+ lv_tag bitfield encoding.
@@ -147,7 +154,8 @@ def mutate_int(target_int: int, new_value: int) -> None:
         +16 lv_tag (size << 3 | sign)
         +24 digit array (uint32[])
     """
-    assert_safe(target_int, stack_depth=5)
+    if safe:
+        assert_safe(target_int, stack_depth=5)
     if target_int == new_value:
         return
 
@@ -202,7 +210,7 @@ def mutate_int(target_int: int, new_value: int) -> None:
                 digit_array[i] = digit
 
 
-def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
+def safe_list_swap(target_list: list[Any], index: int, new_obj: Any, safe: bool = True) -> None:
     """
     Replace a list item by hot-swapping the memory pointer.
 
@@ -216,7 +224,8 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
         list_addr + LIST_ITEMS_OFFSET → ob_item pointer
         ob_item + (index * 8)         → slot to swap
     """
-    assert_safe(target_list, stack_depth=5)
+    if safe:
+        assert_safe(target_list, stack_depth=5)
     if index < 0 or index >= len(target_list):
         raise IndexError("List index out of range")
 
@@ -235,7 +244,7 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
             ctypes.c_ssize_t.from_address(old_obj_ptr).value -= 1            # DECREF old
 
 
-def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) -> None:
+def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any, safe: bool = True) -> None:
     """
     Find value pointer for a dict key and hot-swap it.
 
@@ -250,7 +259,8 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
         dict_addr + ma_keys_offset → ma_keys pointer
         scan ma_keys for old_val_id → target slot
     """
-    assert_safe(target_dict, stack_depth=5)
+    if safe:
+        assert_safe(target_dict, stack_depth=5)
     if key not in target_dict:
         raise KeyError(f"Key '{key}' not found.")
 
@@ -282,7 +292,7 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
             pass
 
     if not target_slot_addr:
-        raise RuntimeError("Could not locate value pointer in memory.")
+        raise PyProbeIntegrityError("Could not locate value pointer in memory.")
 
     with gc_suspended():
         ctypes.c_ssize_t.from_address(new_obj_addr).value += 1               # INCREF new
@@ -290,7 +300,7 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
         ctypes.c_ssize_t.from_address(old_val_id).value -= 1                 # DECREF old
 
 
-def mutate_bytes(target_bytes: bytes, new_bytes: bytes) -> None:
+def mutate_bytes(target_bytes: bytes, new_bytes: bytes, safe: bool = True) -> None:
     """
     Overwrites the raw character array of a bytes object in RAM.
     Lengths MUST match exactly to avoid writing out of bounds.
@@ -302,14 +312,15 @@ def mutate_bytes(target_bytes: bytes, new_bytes: bytes) -> None:
         +24 ob_shash (cached hash)
         +32 ob_sval (raw byte array) ← we overwrite this block
     """
-    assert_safe(target_bytes, stack_depth=5)
+    if safe:
+        assert_safe(target_bytes, stack_depth=5)
 
     for referrer in gc.get_referrers(target_bytes):
         if isinstance(referrer, types.CodeType):
-            raise PermissionError("SECURITY LOCKDOWN: Attempted to mutate live function bytecode (co_code).")
+            raise PyProbeSecurityError("SECURITY LOCKDOWN: Attempted to mutate live function bytecode (co_code).")
         
     if len(target_bytes) != len(new_bytes):
-        raise ValueError("Length mismatch: cannot resize allocated bytes object.")
+        raise PyProbeIntegrityError("Length mismatch: cannot resize allocated bytes object.")
     if target_bytes == new_bytes:
         return
 
@@ -326,31 +337,32 @@ def mutate_bytes(target_bytes: bytes, new_bytes: bytes) -> None:
         ctypes.c_ssize_t.from_address(addr + 24).value = -1
 
 
-def mutate_str(target_str: str, new_str: str) -> None:
+def mutate_str(target_str: str, new_str: str, safe: bool = True) -> None:
     """
     Overwrites the inline character array of a dynamically created, 
     non-interned Compact ASCII string in memory.
     Uses Phase 1 dynamic offset discovery.
     """
-    assert_safe(target_str, stack_depth=5)
+    if safe:
+        assert_safe(target_str, stack_depth=5)
     if len(target_str) != len(new_str):
-        raise ValueError("Length mismatch: cannot resize allocated string object.")
+        raise PyProbeIntegrityError("Length mismatch: cannot resize allocated string object.")
     if target_str == new_str:
         return
 
     addr = id(target_str)
 
     if STR_DATA_OFFSET is None:
-        raise RuntimeError("String data offset was not discovered.")
+        raise PyProbeIntegrityError("String data offset was not discovered.")
 
     data_offset: int = STR_DATA_OFFSET
 
     # State validation (ensure it is Compact ASCII and not interned)
     state_flags = ctypes.c_uint32.from_address(addr + 32).value
     if (state_flags & 0x03) != 0:
-        raise ValueError("Aborting: String is interned.")
+        raise PyProbeSecurityError("Aborting: String is interned.")
     if ((state_flags >> 2) & 0x07) != 1:
-        raise TypeError("Unsupported encoding. Scalpel only mutates Compact ASCII.")
+        raise PyProbeSecurityError("Unsupported encoding. Scalpel only mutates Compact ASCII.")
 
     with gc_suspended():
         target_buffer: int = addr + data_offset

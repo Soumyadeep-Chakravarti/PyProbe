@@ -2,6 +2,8 @@ import ctypes
 import os
 from typing import Any, Optional
 
+from pyprobe.core.common import PyProbeError
+
 
 def is_readable_ptr(ptr: int | None) -> bool:
     """
@@ -52,7 +54,7 @@ def _discover_offset(obj: Any, known_values: list[Any]) -> int:
         if match:
             return offset
 
-    raise RuntimeError(
+    raise PyProbeError(
         f"Could not discover offset for {type(obj).__name__}"
     )
 
@@ -98,7 +100,7 @@ def _discover_list_items_offset() -> int:
         except Exception:
             continue
 
-    raise RuntimeError("Could not discover list items offset!")
+    raise PyProbeError("Could not discover list items offset!")
 
 
 def _discover_set_items_offset() -> int:
@@ -121,7 +123,7 @@ def _discover_set_items_offset() -> int:
         if ptr == expected_addr:
             return offset
 
-    raise RuntimeError("Could not discover set items offset!")
+    raise PyProbeError("Could not discover set items offset!")
 
 
 def _discover_str_data_offset() -> int:
@@ -144,7 +146,7 @@ def _discover_str_data_offset() -> int:
         except Exception:
             continue
 
-    raise RuntimeError("Could not discover string data offset!")
+    raise PyProbeError("Could not discover string data offset!")
 
 
 def _discover_dict_entry_layout() -> dict[str, int]:
@@ -192,7 +194,7 @@ def _discover_dict_entry_layout() -> dict[str, int]:
             break
 
     if ma_keys_ptr is None or v1_offset_in_keys is None:
-        raise RuntimeError("Could not find ma_keys or v1!")
+        raise PyProbeError("Could not find ma_keys or v1!")
     assert isinstance(ma_keys_offset, int)
 
     # Step 2: Find v2 offset inside ma_keys
@@ -211,7 +213,7 @@ def _discover_dict_entry_layout() -> dict[str, int]:
             continue
 
     if v2_offset_in_keys is None:
-        raise RuntimeError("Could not find v2 in ma_keys!")
+        raise PyProbeError("Could not find v2 in ma_keys!")
 
     entry_size = v2_offset_in_keys - v1_offset_in_keys
 
