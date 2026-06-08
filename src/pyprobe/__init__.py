@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Dict, Optional
 
 from .core import Pointer
 from .core.common import (
@@ -8,6 +8,7 @@ from .core.common import (
     PyProbeSecurityError,
     PyProbeWarning,
 )
+from .core.ux import explain, audit, audit_str, to_dict, to_json, compare, compare_str
 
 
 def pin(obj: Any) -> Pointer:
