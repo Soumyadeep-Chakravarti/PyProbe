@@ -9,7 +9,7 @@ This document describes the system design, code organization, and key design pat
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         User Code                               │
-│                   pyprobe.pin(obj) / pin_addr(addr)             │
+│      pyprobe.pin(obj) / pin_addr(addr) / explain(obj) / ...    │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -19,11 +19,15 @@ This document describes the system design, code organization, and key design pat
 │                                                                 │
 │   pin(obj) ──────► Pointer(target=obj)                          │
 │   pin_addr(addr) ► Pointer(address=addr)                        │
+│   explain(obj) ──► UX inspection report                        │
+│   audit(scope) ──► Safety audit report                          │
+│   to_json(obj) ──► Structured JSON output                      │
+│   compare(a,b) ──► Side-by-side comparison                      │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       Engine Layer                              │
+│                      Engine Layer                               │
 │               src/pyprobe/core/pointer/engine.py                │
 │                                                                 │
 │   Pointer class:                                                │
@@ -32,6 +36,21 @@ This document describes the system design, code organization, and key design pat
 │   ├── examine()       → Pretty-printed inspection               │
 │   ├── pull_data_from_address() → Recursive extraction           │
 │   └── _extract_*()    → Type-specific extractors                │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  Mutation Layer (Scalpel)                        │
+│              src/pyprobe/core/Scalpel.py                        │
+│                                                                 │
+│   mutate_float()    - In-place float mutation                   │
+│   mutate_int()      - In-place int mutation                     │
+│   safe_list_swap()  - List item swap                            │
+│   safe_dict_value_swap() - Dict value swap                      │
+│   mutate_bytes()    - In-place bytes mutation                   │
+│   mutate_str()      - In-place string mutation                  │
+│                                                                 │
+│   All functions: gc_suspend/resume, assert_safe, safe param     │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -66,35 +85,19 @@ This document describes the system design, code organization, and key design pat
 PyProbe/
 ├── src/
 │   └── pyprobe/
-│       ├── __init__.py              # Public API: pin(), pin_addr()
+│       ├── __init__.py              # Public API: pin(), pin_addr(), exceptions, UX
 │       ├── core/
-│       │   ├── __init__.py
-│       │   ├── common.py            # (Reserved for shared utilities)
+│       │   ├── __init__.py          # Exports Pointer + exceptions
+│       │   ├── common.py            # PyProbeError hierarchy (5 classes)
+│       │   ├── Scalpel.py           # Mutation functions + safety checks
+│       │   ├── offset_discovery.py  # Dynamic offset discovery
+│       │   ├── ux.py                # explain(), audit(), to_json(), compare()
 │       │   └── pointer/
 │       │       ├── __init__.py
-│       │       └── engine.py        # The Pointer class (626 lines)
+│       │       └── engine.py        # The Pointer class
 │       └── raw/
 │           ├── headers/             # Full CPython struct mirrors
-│           │   ├── __init__.py
-│           │   ├── py_object.py     # PyObject_HEAD
-│           │   ├── py_type.py       # PyTypeObject (partial)
-│           │   ├── py_long.py       # PyLongObject
-│           │   ├── py_float.py      # PyFloatObject
-│           │   ├── py_unicode.py    # PyASCIIObject, PyCompactUnicodeObject
-│           │   ├── py_list.py       # PyListObject
-│           │   ├── py_tuple.py      # PyTupleObject
-│           │   ├── py_dict.py       # PyDictObject, DictKeysObject
-│           │   └── py_collections.py # PyBytesObject, PySetObject
 │           └── lenses/              # Body-only "surgical" views
-│               ├── __init__.py
-│               ├── int_lens.py
-│               ├── float_lens.py
-│               ├── str_lens.py
-│               ├── list_lens.py
-│               ├── tuple_lens.py
-│               ├── dict_lens.py
-│               ├── set_lens.py
-│               └── bytes_lens.py
 ├── tools/
 │   ├── explorer_repl.py             # Interactive memory REPL
 │   └── leak_tracker.py              # Reference count tracker
@@ -321,6 +324,30 @@ User calls: pyprobe.pin(my_dict).xray()
 
 The scalpel phase has been integrated into the Pointer class. Mutation capabilities are now available directly on Pointer instances.
 
+### Exception Hierarchy
+
+All custom exceptions are defined in `src/pyprobe/core/common.py`:
+
+```python
+PyProbeError                  # Base class for all PyProbe exceptions
+├── PyProbeSecurityError      # HARD block (no bypass) — immutable/protected objects
+│   └── "Cannot mutate immutable/protected object: ..."
+├── PyProbeIntegrityError     # HARD block (no bypass) — would corrupt memory/state
+│   └── "Length mismatch, dict scan failure, ..."
+├── PyProbeSafetyError        # SOFT block (bypassable with safe=False)
+│   └── "Assertion failed: ..."
+├── PyProbeWarning            # Standalone (not subclass of PyProbeError)
+│   └── "Warning message"
+```
+
+**Three severity tiers**:
+- **SecurityError** (HARD): Always raises, no way to bypass. Used for interned strings, live bytecode.
+- **IntegrityError** (HARD): Always raises. Used for length mismatches, dict scan failures.
+- **SafetyError** (SOFT): Blocked by default. Skippable via `safe=False` on mutation functions.
+- **Warning** standalone: Used for non-fatal warnings, not part of `PyProbeError` tree.
+
+Standard exceptions (`IndexError`, `KeyError`, `MemoryError`, `ValueError`) are kept where semantically correct.
+
 ### Mutation Methods on Pointer
 
 The Pointer class now includes the following mutation methods that delegate to Scalpel functions:
@@ -329,17 +356,23 @@ The Pointer class now includes the following mutation methods that delegate to S
 - `mutate_int(new_value)` - Safely mutate an int object's value in-place (with small int cache protection)
 - `safe_list_swap(index, new_obj)` - Safely swap a list item at the given index
 - `safe_dict_value_swap(key, new_value)` - Safely swap a dict value for the given key
+- `mutate_bytes(new_value)` - Safely mutate bytes object in-place
+- `mutate_str(new_value)` - Safely mutate string object in-place
 
-These methods perform pre-mutation safety checks (refcount verification, interning detection, etc.) and use the Scalpel module's `gc_suspended` context manager to prevent garbage collection during mutation.
+All mutation methods accept a `safe` parameter (default `True`):
+- `safe=True` — Full safety checks via `assert_safe()`; `PyProbeSafetyError` raised if check fails
+- `safe=False` — Skips `assert_safe()` entirely; `PyProbeSecurityError` and `PyProbeIntegrityError` still fire
 
-### Safety Guards
+### Safety Checks
 
-Safety checks are performed within each mutation method:
-- Refcount checks to prevent mutating shared objects
-- Interning detection for strings and small integers
-- Small int cache protection (-5 to 256)
-- Immortal object respect (PEP 683)
-- GC suspension during mutation to prevent inconsistent states
+Each mutation function performs three tiers of checks:
+1. **Hard blocks** (always fire, `safe=False` cannot bypass):
+   - `PyProbeSecurityError`: immutable/protected objects (interned strings, live bytecode)
+   - `PyProbeIntegrityError`: would corrupt memory/state (length mismatch, dict scan failure)
+2. **Soft blocks** (bypassable with `safe=False`):
+   - `PyProbeSafetyError`: shared references, cached small ints, etc.
+3. **No check needed**:
+   - `PyProbeWarning`: standalone warnings for non-fatal conditions
 
 See [SAFETY_MODEL.md](./SAFETY_MODEL.md) for the complete safety analysis.
 
@@ -349,6 +382,28 @@ The mutation functionality leverages:
 - `src/pyprobe/core/Scalpel.py` - Core mutation functions with safety checks
 - `src/pyprobe/core/offset_discovery.py` - Dynamic offset discovery for internal data structures
 - Existing Pointer class infrastructure for type checking and address validation
+
+---
+
+## UX Module
+
+`src/pyprobe/core/ux.py` provides high-level inspection and comparison utilities:
+
+| Function | Purpose |
+|----------|---------|
+| `explain(obj)` | Pretty-print memory inspection report (ANSI color support) |
+| `audit(scope)` | Audit scope objects for safety/blocking conditions |
+| `audit_str(scope)` | Audit as string (no ANSI) |
+| `to_dict(obj)` | Structured memory inspection as Python dict |
+| `to_json(obj)` | Structured memory inspection as JSON string |
+| `compare(a, b)` | Side-by-side memory comparison with diff highlights |
+| `compare_str(a, b)` | Comparison as string (no ANSI) |
+
+**Color support** (via environment variables):
+- `PYPROBE_COLOR`: `auto` (default), `always`, `never`
+- `PYPROBE_COLOR_MODE`: `normal` (default), `colorblind`
+
+When `auto` mode is used, ANSI codes are suppressed if stdout is not a TTY or `NO_COLOR` is set.
 
 ---
 

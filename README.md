@@ -20,8 +20,11 @@ We're building the tools to truly understand and control Python's memory - with 
 
 ### Recent Enhancements
 
-- **Generalized offset discovery**: PyProbe now dynamically discovers memory offsets for internal data structures (tuple items, list items, dict keys) at runtime instead of using hardcoded values, making it more robust across Python versions
-- **Scalpel mutation capabilities**: Integrated safe in-memory mutation functions that allow modifying integers, floats, list elements, and dict values without object re-allocation
+- **Custom exception hierarchy**: `PyProbeError`, `PyProbeSecurityError`, `PyProbeIntegrityError`, `PyProbeSafetyError`, `PyProbeWarning` with severity tiers
+- **`safe=False` bypass**: All 6 mutation functions accept `safe=False` to skip soft safety checks while hard blocks (SecurityError, IntegrityError) always fire
+- **UX module**: `explain()`, `audit()`, `to_dict()`, `to_json()`, `compare()` with ANSI color support
+- **Generalized offset discovery**: Dynamically discovers memory offsets at runtime
+- **Scalpel mutation**: In-place mutation for int, float, str, bytes, list, dict
 
 ---
 
@@ -40,6 +43,13 @@ ptr.examine()
 # Extract the actual data
 data = ptr.xray()
 print(data)  # {'name': 'Alice', 'scores': [95, 87, 92]}
+
+# Explain: mutation plan for any object
+print(pyprobe.explain(3.14))
+
+# Audit: scan a scope for mutable targets
+my_int = 9999
+print(pyprobe.audit(locals()))
 ```
 
 ---
@@ -80,11 +90,19 @@ Controlled memory mutation with safety guarantees:
 | Capability | Status |
 |------------|--------|
 | Safety model | Documented |
-| Pre-mutation checks | Implemented |
-| Integer mutation | Available |
-| Float mutation | Available |
-| List element swap | Available |
-| Dict value update | Available |
+| Custom exceptions | `PyProbeError`, `SecurityError`, `IntegrityError`, `SafetyError`, `Warning` |
+| Pre-mutation checks | `is_safe_to_mutate()` + `assert_safe()` |
+| `safe=False` bypass | Skip soft checks, hard blocks always fire |
+| Integer mutation | `mutate_int()` |
+| Float mutation | `mutate_float()` |
+| List element swap | `safe_list_swap()` |
+| Dict value update | `safe_dict_value_swap()` |
+| Bytes mutation | `mutate_bytes()` |
+| String mutation | `mutate_str()` |
+| UX: explain() | Human-readable mutation plan |
+| UX: audit() | Scan scope for mutable targets |
+| UX: to_json() | Structured mutation metadata |
+| UX: compare() | Mutation equivalence check |
 
 ### Phase 3: Surgeon's Toolkit (Future)
 
@@ -177,6 +195,16 @@ For mutation (Phase 2), additional safety:
 - **Interning detection** - Blocks mutation of interned strings
 - **Small int cache** - Protects cached integers (-5 to 256)
 - **Immortal objects** - Respects PEP 683 immortality
+
+### Exception Hierarchy
+
+| Exception | Severity | Bypassable? |
+|-----------|----------|-------------|
+| `PyProbeError` | Base class | — |
+| `PyProbeSecurityError` | Hard block | No |
+| `PyProbeIntegrityError` | Hard block | No |
+| `PyProbeSafetyError` | Soft block | Yes (`safe=False`) |
+| `PyProbeWarning` | Warning | N/A |
 
 See [SAFETY_MODEL.md](docs/SAFETY_MODEL.md) for the complete safety analysis.
 
