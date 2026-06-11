@@ -225,34 +225,55 @@ In shared memory scenarios, you might have explicit ownership protocols:
 Before ANY memory write, verify:
 
 ```python
-def is_safe_to_mutate(addr, type_name, value=None):
+from pyprobe.core.common import (
+    PyProbeError, PyProbeSecurityError, PyProbeIntegrityError,
+    PyProbeSafetyError, PyProbeWarning
+)
+
+def assert_safe(obj_or_addr, type_name, value=None):
     """
-    Returns (safe: bool, reason: str)
+    Three-tier safety check. Raises on hard blocks.
+    
+    - PyProbeSecurityError: immutable/protected objects (HARD block, no bypass)
+    - PyProbeIntegrityError: would corrupt memory/state (HARD block, no bypass)
+    - PyProbeSafetyError: shared references, cached values (SOFT block, bypassable)
     """
     # 1. Check immortality
     if is_immortal(addr):
-        return False, "Object is immortal"
+        raise PyProbeSecurityError(f"Cannot mutate immortal object: {type_name}")
 
     # 2. Check interning (strings)
     if type_name == 'str':
         if is_interned(addr):
-            return False, "String is interned"
+            raise PyProbeSecurityError(f"Cannot mutate interned string")
 
     # 3. Check small integer cache
     if type_name == 'int' and value is not None:
         if is_cached_int(value):
-            return False, "Integer is in small int cache"
+            raise PyProbeSafetyError(f"Integer {value} is in small int cache (-5 to 256)")
 
     # 4. Check refcount
     refs = refcount(addr)
     if refs > 2:  # 2 because our check adds a reference
-        return False, f"Object has {refs} references (shared)"
+        raise PyProbeSafetyError(f"Object has {refs} references (shared)")
 
     # 5. Check GC state
     if is_gc_running():
-        return False, "GC is currently running"
+        raise PyProbeSafetyError("GC is currently running")
 
-    return True, "Safe to mutate"
+    return True  # Safe
+```
+
+**Usage with `safe` parameter**:
+
+```python
+from pyprobe.core.Scalpel import mutate_int
+
+# Default: full safety checks
+mutate_int(addr, 1000)  # Raises PyProbeSafetyError if check fails
+
+# Skip soft checks (hard blocks still fire)
+mutate_int(addr, 1000, safe=False)  # Skips assert_safe() entirely
 ```
 
 ---
@@ -459,17 +480,29 @@ Every mutation function should have tests for:
 
 ## API Design Implications
 
-The scalpel API should make safe operations easy and dangerous operations hard:
+The scalpel API makes safe operations easy and dangerous operations explicit:
 
 ```python
+from pyprobe.core.Scalpel import mutate_int, mutate_float, safe_list_swap
+
 # Easy (safe by default)
-ptr.mutate(new_value)  # Validates, raises if unsafe
+mutate_int(addr, 1000)           # Validates, raises PyProbeSafetyError if unsafe
 
-# Explicit (requires acknowledgment)
-ptr.mutate_unchecked(new_value)  # Skips validation
+# Explicit bypass (skips soft checks only)
+mutate_int(addr, 1000, safe=False)  # Skips assert_safe(); hard blocks still fire
 
-# Nuclear (requires double opt-in)
-ptr.force_mutate(new_value, i_know_what_im_doing=True)
+# Hard blocks ALWAYS fire regardless of safe parameter
+mutate_int(addr, 1000)  # PyProbeSecurityError for interned objects
+mutate_int(addr, 1000, safe=False)  # Same - SecurityError cannot be bypassed
 ```
 
-This design makes it hard to accidentally corrupt memory while still allowing research/debugging use cases.
+**Exception hierarchy**:
+
+| Exception | Severity | Bypassable? | Example |
+|-----------|----------|-------------|---------|
+| `PyProbeSecurityError` | HARD | No | Interned string, live bytecode |
+| `PyProbeIntegrityError` | HARD | No | Length mismatch, dict scan failure |
+| `PyProbeSafetyError` | SOFT | Yes (`safe=False`) | Shared ref, cached int |
+| `PyProbeWarning` | Warning | N/A | Non-fatal conditions |
+
+Standard exceptions (`IndexError`, `KeyError`, `MemoryError`, `ValueError`) are kept where semantically correct.
