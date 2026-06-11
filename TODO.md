@@ -11,5 +11,5 @@
 - [x] Test live_address_test.py to ensure concurrent scenarios work
 
 ## Low Priority
-- [ ] Consider adding batch mutation methods
-- [ ] Add documentation/examples for mutation usage
+- [x] Consider adding batch mutation methods
+- [x] Add documentation/examples for mutation usage

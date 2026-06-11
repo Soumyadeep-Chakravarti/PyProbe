@@ -713,6 +713,14 @@ class Pointer:
         """Swap a dict value pointer."""
         Scalpel.safe_dict_value_swap(target_dict, key, new_addr)
 
+    def mutate_batch(
+        self,
+        operations: list[tuple],
+        safe: bool = True,
+    ) -> None:
+        """Execute multiple mutations atomically — all rolled back on failure."""
+        Scalpel.mutate_batch(operations, safe=safe)
+
     def __repr__(self) -> str:
         """Return a developer-friendly representation of the Pointer."""
         target_info = (

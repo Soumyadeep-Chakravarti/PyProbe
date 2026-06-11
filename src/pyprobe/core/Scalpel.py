@@ -145,7 +145,7 @@ def assert_safe(obj: Any, stack_depth: int = 3, verify_after: bool = True) -> No
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Sequence
 
 
 class TransactionError(PyProbeError):
@@ -585,6 +585,41 @@ def mutate_str(target_str: str, new_str: str, safe: bool = True) -> None:
 
     verify(target_str, snap, strict=True)
     _track_revert(Transaction._revert_str, target_str, snap)
+
+
+# ── Batch Mutation ──────────────────────────────────────────────────────────
+
+def mutate_batch(
+    operations: Sequence[tuple[Callable, ...]],
+    safe: bool = True,
+) -> None:
+    """
+    Execute multiple mutations atomically under a single transaction.
+
+    If any mutation fails, all previous mutations are rolled back,
+    leaving all objects in their original state.
+
+    Args:
+        operations: Sequence of ``(mutate_fn, arg1, arg2, ...)`` tuples.
+        safe: Passed as a keyword argument to each mutation function.
+
+    Raises:
+        The first exception raised by any mutation.
+
+    Example:
+        >>> x = 3.14
+        >>> y = 1000
+        >>> lst = [1, 2, 3]
+        >>> mutate_batch([
+        ...     (mutate_float, x, 2.71),
+        ...     (mutate_int, y, 42),
+        ...     (safe_list_swap, lst, 0, 999),
+        ... ])
+    """
+    with transaction():
+        for op in operations:
+            fn, *args = op
+            fn(*args, safe=safe)
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────
