@@ -393,16 +393,17 @@ mutate_str(x, "world")  # x is now "world"
 ```python
 from pyprobe import (
     PyProbeError,
+    PyProbeFatalError,
     PyProbeSecurityError,
     PyProbeIntegrityError,
     PyProbeSafetyError,
     PyProbeWarning,
 )
-```
 
 | Exception | Severity | Bypassable? | Example |
 |-----------|----------|-------------|---------|
 | `PyProbeError` | Base class | — | — |
+| `PyProbeFatalError` | HARD block | No | Unrecoverable CPython state |
 | `PyProbeSecurityError` | HARD block | No | Interned string, live bytecode |
 | `PyProbeIntegrityError` | HARD block | No | Length mismatch, dict scan failure |
 | `PyProbeSafetyError` | SOFT block | Yes (`safe=False`) | Shared ref, cached int |
@@ -416,5 +417,6 @@ from pyprobe import (
 |----------|--------|---------|-------------|
 | `PYPROBE_COLOR` | `auto`, `always`, `never` | `auto` | ANSI color output control |
 | `PYPROBE_COLOR_MODE` | `normal`, `colorblind` | `normal` | Colorblind-safe palette |
+| `PYPROBE_QUIET` | `1`, `true`, `yes` | unset | Suppress non-error output from explain, audit, compare |
 
 `auto` mode enables colors only when stdout is a TTY (respects `NO_COLOR`).

@@ -330,6 +330,8 @@ All custom exceptions are defined in `src/pyprobe/core/common.py`:
 
 ```python
 PyProbeError                  # Base class for all PyProbe exceptions
+├── PyProbeFatalError         # HARD block (no bypass) — unrecoverable CPython state
+│   └── "Unrecoverable condition: ..."
 ├── PyProbeSecurityError      # HARD block (no bypass) — immutable/protected objects
 │   └── "Cannot mutate immutable/protected object: ..."
 ├── PyProbeIntegrityError     # HARD block (no bypass) — would corrupt memory/state

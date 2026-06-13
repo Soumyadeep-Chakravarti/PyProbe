@@ -29,5 +29,14 @@ class PyProbeSafetyError(PyProbeError):
     """
 
 
+class PyProbeFatalError(PyProbeError):
+    """Raised when an operation encounters an unrecoverable state.
+
+    This is a HARD block — cannot be bypassed.
+    Indicates CPython internal corruption or a condition
+    from which recovery is impossible.
+    """
+
+
 class PyProbeWarning(UserWarning):
     """Warning issued for non-critical PyProbe issues."""

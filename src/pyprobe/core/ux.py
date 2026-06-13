@@ -27,6 +27,13 @@ from pyprobe.core.common import (
 )
 
 
+# ── Quiet Mode ───────────────────────────────────────────────────────────
+
+def is_quiet() -> bool:
+    """Check if PYPROBE_QUIET is set (suppress non-error output)."""
+    return os.environ.get("PYPROBE_QUIET", "").lower() in ("1", "true", "yes")
+
+
 # ── Color Support ───────────────────────────────────────────────────────────
 
 class _Color:
@@ -171,15 +178,18 @@ def explain(obj: Any) -> str:
     fn_name = _mutation_function_name(obj)
     constraints = _get_constraints(obj)
     size = _estimate_size(obj)
+    type_name = type(obj).__name__
+    repr_str = repr(obj)
+    if len(repr_str) > 60:
+        repr_str = repr_str[:57] + "..."
+
+    if is_quiet():
+        return f"{type_name} 0x{id(obj):012x} {verdict.value} {fn_name}"
 
     lines = []
     c = _Color
 
     # Header
-    type_name = type(obj).__name__
-    repr_str = repr(obj)
-    if len(repr_str) > 60:
-        repr_str = repr_str[:57] + "..."
     lines.append(c.c(f"  {type_name}", c.BOLD) + f"  {c.c(repr_str, c.DIM)}")
     lines.append(f"  Address:  0x{id(obj):012x}")
     lines.append(f"  Size:     ~{size} bytes")
@@ -278,6 +288,10 @@ def audit_str(scope: Optional[Dict[str, Any]] = None) -> str:
     """Human-readable string version of audit()."""
     report = audit(scope)
     c = _Color
+
+    if is_quiet():
+        return f"audit: {report.total_safe} safe, {report.total_unsafe} unsafe ({len(report.targets)} total)"
+
     lines = []
     lines.append(c.c("PyProbe Audit Report", c.BOLD))
     lines.append(f"  Safe:   {c.c(str(report.total_safe), c.GREEN)}")
@@ -370,8 +384,12 @@ def compare(obj_a: Any, obj_b: Any) -> Dict[str, Any]:
 
 def compare_str(obj_a: Any, obj_b: Any) -> str:
     """Human-readable comparison."""
-    c = _Color
     r = compare(obj_a, obj_b)
+
+    if is_quiet():
+        return f"compare: {r['type_a']} vs {r['type_b']} — compatible={r['compatible']}"
+
+    c = _Color
     lines = []
     lines.append(c.c("PyProbe Compare", c.BOLD))
     lines.append(f"  Object A:  {c.c(r['type_a'], c.CYAN)}  {repr(obj_a)[:40]}")

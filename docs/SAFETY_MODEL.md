@@ -500,6 +500,7 @@ mutate_int(addr, 1000, safe=False)  # Same - SecurityError cannot be bypassed
 
 | Exception | Severity | Bypassable? | Example |
 |-----------|----------|-------------|---------|
+| `PyProbeFatalError` | HARD | No | Unrecoverable CPython state |
 | `PyProbeSecurityError` | HARD | No | Interned string, live bytecode |
 | `PyProbeIntegrityError` | HARD | No | Length mismatch, dict scan failure |
 | `PyProbeSafetyError` | SOFT | Yes (`safe=False`) | Shared ref, cached int |

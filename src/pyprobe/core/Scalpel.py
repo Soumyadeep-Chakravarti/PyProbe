@@ -191,6 +191,8 @@ class Transaction:
 
     def commit(self) -> None:
         """Discard all snapshots — mutations become permanent."""
+        ring = _get_ring()
+        ring.info(2, f"transaction commit: {len(self._revert_ops)} operations committed")
         self._revert_ops.clear()
         self._committed = True
 
@@ -198,6 +200,8 @@ class Transaction:
         """Revert all tracked mutations in reverse order."""
         if self._committed:
             return
+        ring = _get_ring()
+        ring.info(2, f"transaction rollback: reverting {len(self._revert_ops)} operations")
         for fn, args in reversed(self._revert_ops):
             try:
                 fn(*args)
@@ -358,6 +362,9 @@ def mutate_float(target_float: float, new_value: float, safe: bool = True) -> No
     if safe:
         assert_safe(target_float, stack_depth=5)
 
+    ring = _get_ring()
+    ring.debug(2, f"mutate_float: addr=0x{id(target_float):x} target_val={target_float!r} new_val={new_value!r}")
+
     addr = id(target_float)
     validate_write_access(addr + 16, 8)
     snap = snapshot(target_float)
@@ -388,6 +395,10 @@ def mutate_int(target_int: int, new_value: int, safe: bool = True) -> None:
     """
     if safe:
         assert_safe(target_int, stack_depth=5)
+
+    ring = _get_ring()
+    ring.debug(2, f"mutate_int: addr=0x{id(target_int):x} target_val={target_int!r} new_val={new_value!r}")
+
     if target_int == new_value:
         return
 
@@ -467,6 +478,9 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any, safe: bool 
     if index < 0 or index >= len(target_list):
         raise IndexError("List index out of range")
 
+    ring = _get_ring()
+    ring.debug(2, f"safe_list_swap: addr=0x{id(target_list):x} index={index} new_val={new_obj!r}")
+
     list_addr    = id(target_list)
     new_obj_addr = id(new_obj)
 
@@ -507,6 +521,9 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any, 
         assert_safe(target_dict, stack_depth=5)
     if key not in target_dict:
         raise KeyError(f"Key '{key}' not found.")
+
+    ring = _get_ring()
+    ring.debug(2, f"safe_dict_value_swap: addr=0x{id(target_dict):x} key={key!r} new_val={new_value!r}")
 
     d_addr       = id(target_dict)
     new_obj_addr = id(new_value)
@@ -584,6 +601,9 @@ def mutate_bytes(target_bytes: bytes, new_bytes: bytes, safe: bool = True) -> No
     if safe:
         assert_safe(target_bytes, stack_depth=5)
 
+    ring = _get_ring()
+    ring.debug(2, f"mutate_bytes: addr=0x{id(target_bytes):x} len={len(target_bytes)} new_val={new_bytes!r}")
+
     for referrer in gc.get_referrers(target_bytes):
         if isinstance(referrer, types.CodeType):
             raise PyProbeSecurityError("SECURITY LOCKDOWN: Attempted to mutate live function bytecode (co_code).")
@@ -624,6 +644,9 @@ def mutate_str(target_str: str, new_str: str, safe: bool = True) -> None:
         raise PyProbeIntegrityError("Length mismatch: cannot resize allocated string object.")
     if target_str == new_str:
         return
+
+    ring = _get_ring()
+    ring.debug(2, f"mutate_str: addr=0x{id(target_str):x} len={len(target_str)} new_val={new_str!r}")
 
     addr = id(target_str)
 

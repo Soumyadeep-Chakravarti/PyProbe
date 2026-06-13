@@ -1,30 +1,59 @@
 import ctypes
+import importlib.util
 import os
 from typing import Any, Optional
 
 from pyprobe.core.common import PyProbeError
 
 
+def _get_ring():
+    """Lazy-load get_ring from log.py to avoid circular imports with pyprobe.core.__init__.
+
+    Caches the loaded module in sys.modules so subsequent imports of
+    pyprobe.core.log reuse the same singleton ring.
+    """
+    import sys
+    if "pyprobe.core.log" in sys.modules:
+        return sys.modules["pyprobe.core.log"].get_ring()
+    _log_path = os.path.join(os.path.dirname(__file__), "log.py")
+    _spec = importlib.util.spec_from_file_location("pyprobe.core.log", _log_path)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["pyprobe.core.log"] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod.get_ring()
+
+
 def is_readable_ptr(ptr: int | None) -> bool:
     """
     Check if pointer is readable without causing a hard OS-level crash.
+
+    Uses /proc/self/mem pread on Linux (ctypes dereference cannot be caught).
+    Uses IsBadReadPtr on Windows. Falls back to ctypes on macOS.
     """
-    # 1. Filter out obvious non-pointers (like small integers such as ob_size=3).
-    # Any address below 64KB (0x10000) is universally unmapped in modern OSs.
     if not isinstance(ptr, int) or ptr < 0x10000:
         return False
 
-    # 2. On Windows, dereferencing invalid high memory STILL causes an Access
-    # Violation that bypasses Python's try/except. We must use IsBadReadPtr.
     if os.name == 'nt':
         try:
-            # IsBadReadPtr returns 0 if the process HAS read access.
             if ctypes.windll.kernel32.IsBadReadPtr(ctypes.c_void_p(ptr), 8) != 0:
                 return False
+            return True
         except Exception:
-            pass
+            return False
 
-    # 3. Standard fallback check
+    if hasattr(os, 'pread') and os.path.exists('/proc/self/mem'):
+        try:
+            fd = os.open('/proc/self/mem', os.O_RDONLY)
+            try:
+                os.pread(fd, 8, ptr)
+                return True
+            except OSError:
+                return False
+            finally:
+                os.close(fd)
+        except OSError:
+            return False
+
     try:
         ctypes.c_void_p.from_address(ptr).value
         return True
@@ -232,33 +261,35 @@ def _fmt_offset(val: Optional[int]) -> str:
 # Run once at module load time
 # ──────────────────────────────────────────────────────
 
-print("Testing tuple...")
+_ring = _get_ring()
+
+_ring.info(0, "Testing tuple...")
 TUPLE_ITEMS_OFFSET: int = _discover_tuple_items_offset()
-print(f"Tuple OK: {_fmt_offset(TUPLE_ITEMS_OFFSET)}")
+_ring.info(0, f"Tuple OK: {_fmt_offset(TUPLE_ITEMS_OFFSET)}")
 
-print("Testing list...")
+_ring.info(0, "Testing list...")
 LIST_ITEMS_OFFSET: int = _discover_list_items_offset()
-print(f"List OK: {_fmt_offset(LIST_ITEMS_OFFSET)}")
+_ring.info(0, f"List OK: {_fmt_offset(LIST_ITEMS_OFFSET)}")
 
-print("Testing set...")
+_ring.info(0, "Testing set...")
 SET_ITEMS_OFFSET: int = _discover_set_items_offset()
-print(f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
+_ring.info(0, f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
 
-print("Testing dict...")
+_ring.info(0, "Testing dict...")
 try:
     _discovered_layout = _discover_dict_entry_layout()
-    print(f"Dict OK: {_discovered_layout}")
+    _ring.info(0, f"Dict OK: {_discovered_layout}")
 except Exception as e:
-    print(f"Dict FAILED: {e}")
+    _ring.warn(0, f"Dict FAILED: {e}")
     _discovered_layout = None
 DICT_LAYOUT: Optional[dict[str, int]] = _discovered_layout
 
-print("Testing str...")
+_ring.info(0, "Testing str...")
 try:
     _discovered_str_offset = _discover_str_data_offset()
-    print(f"Str OK: {_fmt_offset(_discovered_str_offset)}")
+    _ring.info(0, f"Str OK: {_fmt_offset(_discovered_str_offset)}")
 except Exception as e:
-    print(f"Str FAILED: {e}")
+    _ring.warn(0, f"Str FAILED: {e}")
     _discovered_str_offset = None
 STR_DATA_OFFSET: Optional[int] = _discovered_str_offset
 
