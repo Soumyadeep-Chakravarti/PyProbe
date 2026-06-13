@@ -5,9 +5,10 @@ High-speed memory introspection for CPython 3.14.
 
 import builtins
 import ctypes
+import importlib.util
+import os
 import sys
-import warnings
-from typing import Any, Dict, Optional, Tuple, Type, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 
 from pyprobe.raw.headers.py_object import PyObjectHeader
 from pyprobe.raw.headers.py_type import PyTypeObject
@@ -35,6 +36,18 @@ ExtractorFunc = Any  # Callable to extractor method
 
 # PyObject_HEAD
 HEADER_SIZE = 16
+
+
+def _get_ring():
+    """Lazy-load get_ring from log.py to avoid circular imports."""
+    if "pyprobe.core.log" in sys.modules:
+        return sys.modules["pyprobe.core.log"].get_ring()
+    _log_path = os.path.join(os.path.dirname(__file__), "..", "log.py")
+    _spec = importlib.util.spec_from_file_location("pyprobe.core.log", _log_path)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["pyprobe.core.log"] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod.get_ring()
 
 # PyVarObject_HEAD
 VAR_HEADER_SIZE = 24
@@ -75,12 +88,8 @@ def _get_dummy_ptr() -> Optional[int]:
                         keys_addr + entries_start + key_offset
                     ).value
         except Exception as e:
-            warnings.warn(
-                f"Failed to locate <dummy> singleton: {e}. "
-                "Dict/set tombstone detection may not work correctly.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            _get_ring().warn(3, f"Failed to locate <dummy> singleton: {e}. "
+                "Dict/set tombstone detection may not work correctly.")
     return _dummy_ptr_cache
 
 
@@ -106,7 +115,7 @@ _UNSET = object()
 class Pointer:
     """Memory introspection pointer for CPython objects."""
 
-    def __init__(self, target: Any = _UNSET, *, address: Optional[int] = None) -> None:
+    def __init__(self, target: Any = _UNSET, *, address: Optional[int] = None, safe: bool = True) -> None:
         has_target = target is not _UNSET
         has_address = address is not None
 
@@ -117,6 +126,7 @@ class Pointer:
 
         self._target = target if has_target else None
         self._from_address = has_address
+        self._safe = safe
         self.address: int = address if has_address else id(target)
         self.header = PyObjectHeader.from_address(self.address)
 
@@ -699,27 +709,39 @@ class Pointer:
 
     def mutate_float(self, target_slot_addr: int, new_val: float) -> None:
         """Mutate a float at a given address."""
-        Scalpel.mutate_float(target_slot_addr, new_val)
+        if self._target is not None and isinstance(self._target, float):
+            Scalpel.mutate_float(self._target, new_val, safe=self._safe)
+        else:
+            raise PyProbeError(
+                "Pointer.mutate_float requires a Python float object. "
+                "Use Scalpel.mutate_float with a Python float object instead."
+            )
 
     def mutate_int(self, target_addr: int, new_val: int) -> None:
         """Mutate a small int at a given address."""
-        Scalpel.mutate_int(target_addr, new_val)
+        if self._target is not None and isinstance(self._target, int):
+            Scalpel.mutate_int(self._target, new_val, safe=self._safe)
+        else:
+            raise PyProbeError(
+                "Pointer.mutate_int requires a Python int object. "
+                "Use Scalpel.mutate_int with a Python int object instead."
+            )
 
     def safe_list_swap(self, target_list: list[Any], index: int, new_obj: Any) -> None:
         """Swap a list item by hot-swapping the memory pointer."""
-        Scalpel.safe_list_swap(target_list, index, new_obj)
+        Scalpel.safe_list_swap(target_list, index, new_obj, safe=self._safe)
 
     def safe_dict_value_swap(self, target_dict: dict[Any, Any], key: object, new_addr: int) -> None:
         """Swap a dict value pointer."""
-        Scalpel.safe_dict_value_swap(target_dict, key, new_addr)
+        Scalpel.safe_dict_value_swap(target_dict, key, new_addr, safe=self._safe)
 
     def mutate_batch(
         self,
         operations: list[tuple],
-        safe: bool = True,
+        safe: Optional[bool] = None,
     ) -> None:
         """Execute multiple mutations atomically — all rolled back on failure."""
-        Scalpel.mutate_batch(operations, safe=safe)
+        Scalpel.mutate_batch(operations, safe=self._safe if safe is None else safe)
 
     def __repr__(self) -> str:
         """Return a developer-friendly representation of the Pointer."""
@@ -795,11 +817,10 @@ class Pointer:
         entries_start_offset, _, is_unicode, _ = geom
         stride = self._get_entry_stride(is_unicode, is_split)
 
-        print(
-            f"  dict: {'UNICODE' if is_unicode else 'GENERAL'} "
+        ring = _get_ring()
+        ring.debug(3, f"  dict: {'UNICODE' if is_unicode else 'GENERAL'} "
             f"{'SPLIT' if is_split else 'COMBINED'}"
-            f"  keys={hex(keys_addr)}  start=+{entries_start_offset}  stride={stride}"
-        )
+            f"  keys={hex(keys_addr)}  start=+{entries_start_offset}  stride={stride}")
 
         dummy_ptr = _get_dummy_ptr()
         for i in range(keys_obj.dk_nentries):
@@ -811,13 +832,13 @@ class Pointer:
                 if key_ptr and key_ptr != dummy_ptr:
                     key = self.pull_data_from_address(key_ptr)
                     value = self.pull_data_from_address(val_ptr) if val_ptr else "NULL"
-                    print(f"    [{i}] {key!r} = {value}")
+                    ring.debug(3, f"    [{i}] {key!r} = {value}")
                 elif key_ptr == dummy_ptr:
-                    print(f"    [{i}] <tombstone>")
+                    ring.debug(3, f"    [{i}] <tombstone>")
                 else:
-                    print(f"    [{i}] <empty>")
+                    ring.debug(3, f"    [{i}] <empty>")
             except Exception as e:
-                print(f"    [{i}] <error: {e}>")
+                ring.debug(3, f"    [{i}] <error: {e}>")
 
     def _examine_set(self) -> None:
         """Examine set internal hash table."""
@@ -827,27 +848,29 @@ class Pointer:
         table_ptr = self.lens.table
         dummy_ptr = _get_dummy_ptr()
 
-        print(f"  set: mask={self.lens.mask}")
+        ring = _get_ring()
+        ring.debug(3, f"  set: mask={self.lens.mask}")
         for i in range(self.lens.mask + 1):
             entry = table_ptr[i]
             key_addr = entry.key
             if key_addr and key_addr != dummy_ptr:
                 val = self.pull_data_from_address(key_addr)
-                print(f"    [{i:2d}] hash={hex(entry.hash)} key={val!r}")
+                ring.debug(3, f"    [{i:2d}] hash={hex(entry.hash)} key={val!r}")
             elif key_addr == dummy_ptr:
-                print(f"    [{i:2d}] <dummy>")
+                ring.debug(3, f"    [{i:2d}] <dummy>")
 
     def _examine_tuple(self) -> None:
         """Examine tuple items using dynamically discovered offset."""
+        ring = _get_ring()
         size = ctypes.c_ssize_t.from_address(self.address + HEADER_SIZE).value
         items_array = ctypes.cast(
             self.address + TUPLE_ITEMS_OFFSET, ctypes.POINTER(ctypes.c_void_p)
         )
-        print(f"  tuple: size={size}")
+        ring.debug(3, f"  tuple: size={size}")
         for i in range(size):
             addr = items_array[i]
             val = self.pull_data_from_address(addr)
-            print(f"    [{i}] {val!r}")
+            ring.debug(3, f"    [{i}] {val!r}")
 
     def _examine_list(self) -> None:
         """Display list contents using dynamically discovered offset."""
@@ -861,15 +884,17 @@ class Pointer:
             return
         items_array = ctypes.cast(items_ptr, ctypes.POINTER(ctypes.c_void_p))
 
-        print(f"  list: size={self.lens.ob_size}")
+        ring = _get_ring()
+        ring.debug(3, f"  list: size={self.lens.ob_size}")
         for i in range(self.lens.ob_size):
             obj_addr = items_array[i]
             actual_value = self.pull_data_from_address(obj_addr)
-            print(f"    [{i}] {actual_value!r}")
+            ring.debug(3, f"    [{i}] {actual_value!r}")
 
     def dump_raw(self, addr: int, length: int = 64, label: str = "MEMORY") -> None:
         """Display hex dump of memory with ASCII representation."""
-        print(f"\n--- DEBUG DUMP: {label} AT {hex(addr)} ---")
+        ring = _get_ring()
+        ring.debug(3, f"--- DEBUG DUMP: {label} AT {hex(addr)} ---")
         try:
             raw_data = ctypes.string_at(addr, length)
             for i in range(0, length, 16):
@@ -877,17 +902,18 @@ class Pointer:
                 chunk = raw_data[i : i + 16]
                 hex_vals = " ".join(f"{b:02x}" for b in chunk).ljust(47)
                 ascii_vals = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
-                print(f"{offset} | {hex_vals} | {ascii_vals}")
+                ring.debug(3, f"{offset} | {hex_vals} | {ascii_vals}")
         except Exception as e:
-            print(f"FAILED TO READ: {e}")
-        print("-" * 60)
+            ring.debug(3, f"FAILED TO READ: {e}")
+        ring.debug(3, "-" * 60)
 
     def _print_logical_data(self) -> None:
         """Display logical field data from lens."""
         if not self.lens:
             return
 
-        print("  fields:")
+        ring = _get_ring()
+        ring.debug(3, "  fields:")
         for field_info in getattr(self.lens, "_fields_", []):
             field_name = field_info[0]
             val = getattr(self.lens, field_name)
@@ -895,23 +921,25 @@ class Pointer:
                 continue
             is_ptr = isinstance(val, int) and field_name.endswith("_ptr")
             display_val = hex(val) if is_ptr else val
-            print(f"    {field_name} = {display_val}")
+            ring.debug(3, f"    {field_name} = {display_val}")
 
     def _print_raw_memory(self, raw_bytes: bytes, total_size: int) -> None:
         """Display raw memory dump in hex format."""
-        print("  hex:")
+        ring = _get_ring()
+        ring.debug(3, "  hex:")
         for i in range(0, total_size, 16):
             chunk = raw_bytes[i : i + 16]
-            print(f"    {i:04x} {chunk.hex(' ')}")
+            ring.debug(3, f"    {i:04x} {chunk.hex(' ')}")
 
     def examine(self) -> None:
         """Comprehensive examination of Python object memory structure."""
+        ring = _get_ring()
         total_size = sys.getsizeof(self._target)
         dump_size = min(total_size, 64)
         raw_bytes = ctypes.string_at(self.address, dump_size)
 
-        print(f"\n  X-RAY {hex(self.address)} type={self.type_name} size={total_size}B")
-        print(f"  refcnt={self.header.ob_refcnt}  type_ptr={hex(self.header.ob_type_ptr)}")
+        ring.debug(3, f"X-RAY {hex(self.address)} type={self.type_name} size={total_size}B")
+        ring.debug(3, f"  refcnt={self.header.ob_refcnt}  type_ptr={hex(self.header.ob_type_ptr)}")
 
         dispatch = {
             "list": self._examine_list,
@@ -926,4 +954,3 @@ class Pointer:
 
         self._print_logical_data()
         self._print_raw_memory(raw_bytes, dump_size)
-        print()

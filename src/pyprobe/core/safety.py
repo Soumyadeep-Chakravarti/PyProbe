@@ -12,6 +12,8 @@ Provides:
 
 import ctypes
 import gc
+import importlib.util
+import os
 import sys
 import types
 from dataclasses import dataclass, field
@@ -24,6 +26,18 @@ from pyprobe.core.common import (
     PyProbeSecurityError,
     PyProbeWarning,
 )
+
+
+def _get_ring():
+    """Lazy-load get_ring from log.py to avoid circular imports."""
+    if "pyprobe.core.log" in sys.modules:
+        return sys.modules["pyprobe.core.log"].get_ring()
+    _log_path = os.path.join(os.path.dirname(__file__), "log.py")
+    _spec = importlib.util.spec_from_file_location("pyprobe.core.log", _log_path)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["pyprobe.core.log"] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod.get_ring()
 
 
 # ── Constants ──────────────────────────────────────────────────────────────
@@ -70,6 +84,7 @@ class ObjectSnapshot:
     float_value: Optional[float] = None  # for float objects
     raw_bytes: Optional[bytes] = None  # for bytes/str objects
     hash_cache: Optional[int] = None  # for bytes/str objects (ob_shash at +24)
+    digit_values: Optional[tuple[int, ...]] = None  # for int objects (digit array values)
 
 
 def _read_object_memory(address: int, size: int) -> bytes:
@@ -118,11 +133,17 @@ def snapshot(obj: object) -> ObjectSnapshot:
     float_value = None
     raw_bytes = None
     hash_cache = None
+    digit_values = None
 
     if isinstance(obj, float):
         float_value = ctypes.c_double.from_address(addr + 16).value
     elif isinstance(obj, int) and sys.version_info >= (3, 12):
         lv_tag = ctypes.c_ssize_t.from_address(addr + 16).value
+        digit_count = lv_tag >> 3
+        if digit_count > 0:
+            ArrayType = ctypes.c_uint32 * digit_count
+            digit_array = ArrayType.from_address(addr + 24)
+            digit_values = tuple(digital for digital in digit_array)
     elif isinstance(obj, (list, tuple)):
         ob_size = ctypes.c_ssize_t.from_address(addr + 16).value  # ob_size
     elif isinstance(obj, (bytes, str)):
@@ -151,6 +172,7 @@ def snapshot(obj: object) -> ObjectSnapshot:
         float_value=float_value,
         raw_bytes=raw_bytes,
         hash_cache=hash_cache,
+        digit_values=digit_values,
     )
 
 
@@ -175,8 +197,7 @@ def verify(obj: object, snap: ObjectSnapshot, *, strict: bool = True) -> None:
         if strict:
             raise PyProbeIntegrityError(msg)
         else:
-            import warnings
-            warnings.warn(msg, PyProbeWarning)
+            _get_ring().warn(1, msg)
 
     # Check refcount (allow small delta for internal Python operations)
     current_refcount = _get_refcount(addr)
@@ -189,8 +210,7 @@ def verify(obj: object, snap: ObjectSnapshot, *, strict: bool = True) -> None:
         if strict:
             raise PyProbeSafetyError(msg)
         else:
-            import warnings
-            warnings.warn(msg, PyProbeWarning)
+            _get_ring().warn(1, msg)
 
     # Check checksum (detect memory corruption from other threads)
     size = _estimate_object_size(obj)
@@ -216,8 +236,7 @@ def verify(obj: object, snap: ObjectSnapshot, *, strict: bool = True) -> None:
                 if strict:
                     raise PyProbeIntegrityError(msg)
                 else:
-                    import warnings
-                    warnings.warn(msg, PyProbeWarning)
+                    _get_ring().warn(1, msg)
 
 
 # ── Bounds Checking ────────────────────────────────────────────────────────
@@ -384,8 +403,9 @@ def is_interned_bytes(obj: object) -> bool:
     """
     Check if a bytes object is interned/cached.
 
-    Bytes objects with a non-negative hash are likely cached.
-    We check by looking at the cached hash field.
+    CPython only interns very short byte strings (length 0-1).
+    Longer bytes objects are never interned by CPython itself,
+    though their hashes may be cached after first computation.
 
     Returns:
         True if the bytes object is likely interned/cached.
@@ -393,19 +413,12 @@ def is_interned_bytes(obj: object) -> bool:
     if not isinstance(obj, bytes):
         return False
 
-    # Short bytes are often interned
+    # Single-byte and empty bytes are always interned in CPython
     if len(obj) <= 1:
         return True
 
-    # Check cached hash (offset +24 for bytes objects)
-    # A non-negative hash means it's been computed and cached
-    try:
-        cached_hash = ctypes.c_ssize_t.from_address(id(obj) + 24).value
-        if cached_hash >= 0:
-            return True
-    except (OSError, ValueError):
-        pass
-
+    # Longer bytes objects are NOT interned by CPython
+    # (a cached hash does NOT mean interned)
     return False
 
 

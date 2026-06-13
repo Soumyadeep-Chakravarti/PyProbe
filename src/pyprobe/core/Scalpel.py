@@ -9,6 +9,8 @@ Includes CPython 3.12+ PyLongObject bitfield fixes.
 import ctypes
 import types
 import gc
+import importlib.util
+import os
 import sys
 from contextlib import contextmanager
 from typing import Tuple, Any
@@ -30,6 +32,20 @@ from pyprobe.core.safety import (
     snapshot,
     verify,
 )
+
+
+def _get_ring():
+    """Lazy-load get_ring from log.py to avoid circular imports."""
+    import sys as _sys
+    if "pyprobe.core.log" in _sys.modules:
+        return _sys.modules["pyprobe.core.log"].get_ring()
+    _log_path = os.path.join(os.path.dirname(__file__), "log.py")
+    _spec = importlib.util.spec_from_file_location("pyprobe.core.log", _log_path)
+    _mod = importlib.util.module_from_spec(_spec)
+    _sys.modules["pyprobe.core.log"] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod.get_ring()
+
 
 # Globally cache the memory addresses of Python's small integers at load time
 SMALL_INT_ADDRS = {id(i) for i in range(-5, 257)}
@@ -199,23 +215,24 @@ class Transaction:
     def _revert_int(target: int, snap: "ObjectSnapshot") -> None:
         addr = id(target)
         ctypes.c_ssize_t.from_address(addr + 16).value = snap.lv_tag  # type: ignore
-        if snap.digit_data:
-            ArrayType = ctypes.c_uint32 * len(snap.digit_data)
+        if snap.digit_values:
+            digit_count = len(snap.digit_values)
+            ArrayType = ctypes.c_uint32 * digit_count
             digit_array = ArrayType.from_address(addr + 24)
-            for i, val in enumerate(snap.digit_data):
+            for i, val in enumerate(snap.digit_values):
                 digit_array[i] = val
 
     @staticmethod
-    def _revert_list_slot(target: list, index: int, old_obj_id: int) -> None:
+    def _revert_list_slot(target: list, index: int, old_obj_ptr: int) -> None:
         list_addr = id(target)
         ob_item = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
         slot_addr = ob_item + (index * 8)
-        old_ptr = ctypes.c_void_p.from_address(slot_addr).value
-        if old_obj_id:
-            ctypes.c_ssize_t.from_address(old_obj_id).value += 1  # INCREF old
-        ctypes.c_void_p.from_address(slot_addr).value = old_obj_id  # SWAP
-        if old_ptr:
-            ctypes.c_ssize_t.from_address(old_ptr).value -= 1  # DECREF current
+        current_ptr = ctypes.c_void_p.from_address(slot_addr).value
+        if old_obj_ptr:
+            ctypes.c_ssize_t.from_address(old_obj_ptr).value += 1  # INCREF old
+        ctypes.c_void_p.from_address(slot_addr).value = old_obj_ptr  # Restore
+        if current_ptr:
+            ctypes.c_ssize_t.from_address(current_ptr).value -= 1  # DECREF current
 
     @staticmethod
     def _revert_dict_slot(target: dict, key: Any, old_val_id: int) -> None:
@@ -228,22 +245,53 @@ class Transaction:
             d_addr + DICT_LAYOUT["ma_keys_offset"]
         ).value
         assert ma_keys_ptr is not None
-        entry_size = DICT_LAYOUT["entry_size"]
-        scan_limit = len(target) * entry_size * 4
 
-        for offset in range(0, scan_limit, 8):
-            try:
-                ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
-                if ptr == current_val_id:
-                    candidate = ma_keys_ptr + offset
-                    if candidate < 0x1000 or candidate & 7:
-                        continue
-                    ctypes.c_ssize_t.from_address(old_val_id).value += 1
-                    ctypes.c_void_p.from_address(candidate).value = old_val_id
-                    ctypes.c_ssize_t.from_address(current_val_id).value -= 1
-                    return
-            except Exception:
-                pass
+        # Read ma_values from the dict struct (not keys object).
+        # For combined dicts (small), ma_values is NULL — values inline in keys.
+        # For split dicts (large, CPython 3.12+), ma_values points to separate array.
+        ma_values_offset = DICT_LAYOUT["ma_keys_offset"] - 8
+        ma_values_ptr = ctypes.c_void_p.from_address(d_addr + ma_values_offset).value
+
+        slot = None
+
+        if ma_values_ptr is not None:
+            # Split dict: scan ma_values for the current value pointer
+            scan_limit = len(target) * 8
+            for offset in range(0, scan_limit, 8):
+                try:
+                    ptr = ctypes.c_void_p.from_address(ma_values_ptr + offset).value
+                    if ptr == current_val_id:
+                        candidate = ma_values_ptr + offset
+                        if candidate < 0x1000 or candidate & 7:
+                            continue
+                        slot = candidate
+                        break
+                except Exception:
+                    pass
+        else:
+            # Compact dict: values interleaved in ma_keys
+            entry_size = DICT_LAYOUT["entry_size"]
+            first_val_off = DICT_LAYOUT["first_value_offset"]
+            scan_limit = len(target) * entry_size * 4
+            for offset in range(first_val_off, scan_limit, entry_size):
+                try:
+                    ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
+                    if ptr == current_val_id:
+                        candidate = ma_keys_ptr + offset
+                        if candidate < 0x1000 or candidate & 7:
+                            continue
+                        slot = candidate
+                        break
+                except Exception:
+                    pass
+
+        if slot is None:
+            return  # best-effort: slot not found
+
+        with gc_suspended():
+            ctypes.c_ssize_t.from_address(old_val_id).value += 1        # INCREF old
+            ctypes.c_void_p.from_address(slot).value = old_val_id       # SWAP back
+            ctypes.c_ssize_t.from_address(current_val_id).value -= 1    # DECREF current
 
     @staticmethod
     def _revert_bytes(target: bytes, snap: "ObjectSnapshot") -> None:
@@ -470,22 +518,41 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any, 
     ).value
     assert ma_keys_ptr is not None
 
-    entry_size  = DICT_LAYOUT["entry_size"]
-    scan_limit  = len(target_dict) * entry_size * 4
+    first_val_off = DICT_LAYOUT["first_value_offset"]
+    ma_values_offset = DICT_LAYOUT["ma_keys_offset"] - 8
+    ma_values_ptr = ctypes.c_void_p.from_address(d_addr + ma_values_offset).value
+
     target_slot_addr = None
 
-    for offset in range(0, scan_limit, 8):
-        try:
-            ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
-            if ptr == old_val_id:
-                candidate = ma_keys_ptr + offset
-                # Validation: reject kernel addresses, null, and unaligned pointers
-                if candidate < 0x1000 or candidate & 7:
-                    continue
-                target_slot_addr = candidate
-                break
-        except Exception:
-            pass
+    if ma_values_ptr is not None:
+        # Split dict (CPython 3.12+): values in separate ma_values array
+        scan_limit = len(target_dict) * 8
+        for offset in range(0, scan_limit, 8):
+            try:
+                ptr = ctypes.c_void_p.from_address(ma_values_ptr + offset).value
+                if ptr == old_val_id:
+                    candidate = ma_values_ptr + offset
+                    if candidate < 0x1000 or candidate & 7:
+                        continue
+                    target_slot_addr = candidate
+                    break
+            except Exception:
+                pass
+    else:
+        # Compact dict: values interleaved in ma_keys
+        entry_size = DICT_LAYOUT["entry_size"]
+        scan_limit = len(target_dict) * entry_size * 4
+        for offset in range(first_val_off, scan_limit, entry_size):
+            try:
+                ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
+                if ptr == old_val_id:
+                    candidate = ma_keys_ptr + offset
+                    if candidate < 0x1000 or candidate & 7:
+                        continue
+                    target_slot_addr = candidate
+                    break
+            except Exception:
+                pass
 
     if not target_slot_addr:
         raise PyProbeIntegrityError("Could not locate value pointer in memory.")
@@ -625,45 +692,46 @@ def mutate_batch(
 # ── Tests ──────────────────────────────────────────────────────────────────
 
 def run_tests():
-    print("=" * 50)
-    print("PyProbe Scalpel: Phase 2 Mutation Tests")
-    print("=" * 50)
+    ring = _get_ring()
+    ring.info(2, "=" * 50)
+    ring.info(2, "PyProbe Scalpel: Phase 2 Mutation Tests")
+    ring.info(2, "=" * 50)
 
     # Float
     f = float("100." + "5")
-    print(f"\n[Float] Before: {f}")
+    ring.info(2, f"[Float] Before: {f}")
     mutate_float(f, 999.99)
-    print(f"[Float] After : {f}")
+    ring.info(2, f"[Float] After : {f}")
 
     # Int
     big_int = int("1" + "0" * 18)
-    print(f"\n[Int] Before: {big_int}")
+    ring.info(2, f"[Int] Before: {big_int}")
     mutate_int(big_int, 42)
-    print(f"[Int] After : {big_int}")
+    ring.info(2, f"[Int] After : {big_int}")
 
     # List
     lst = list((10, 20, 30))
-    print(f"\n[List] Before: {lst}")
+    ring.info(2, f"[List] Before: {lst}")
     safe_list_swap(lst, 1, "MUTATED")
-    print(f"[List] After : {lst}")
+    ring.info(2, f"[List] After : {lst}")
 
     # Dict
     d = dict(status="secure", version=1)
-    print(f"\n[Dict] Before: {d}")
+    ring.info(2, f"[Dict] Before: {d}")
     safe_dict_value_swap(d, "status", "mutated")
-    print(f"[Dict] After : {d}")
+    ring.info(2, f"[Dict] After : {d}")
 
     # Bytes
     b = bytes(bytearray([65, 66, 67, 68]))  # b"ABCD"
-    print(f"\n[Bytes] Before: {b}")
+    ring.info(2, f"[Bytes] Before: {b}")
     mutate_bytes(b, b"WXYZ")
-    print(f"[Bytes] After : {b}")
+    ring.info(2, f"[Bytes] After : {b}")
 
     # String
     s = "".join(["1", "2", "3", "4"])
-    print(f"\n[Str] Before: {s}")
+    ring.info(2, f"[Str] Before: {s}")
     mutate_str(s, "4567")
-    print(f"[Str] After : {s}")
+    ring.info(2, f"[Str] After : {s}")
 
 if __name__ == "__main__":
     run_tests()
