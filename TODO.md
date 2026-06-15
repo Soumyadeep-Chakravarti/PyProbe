@@ -64,10 +64,10 @@
 - [x] Replace `print()` in `pointer/engine.py` (23 calls) with `ring.debug(3, ...)`
 - [x] Replace `warnings.warn()` in `safety.py` (3 calls) with `ring.warn(1, ...)`
 - [x] Replace `warnings.warn()` in `pointer/engine.py` (1 call) with `ring.warn(3, ...)`
-- [ ] Add per-mutation debug logging to all 6 mutation functions in `Scalpel.py`
-- [ ] Add transaction commit/rollback logging in `Transaction` class
-- [ ] Export `get_ring` from `pyprobe.core.__init__` and `pyprobe.__init__`
-- [ ] Write tests for `LogRing` (write, flush, overflow, peek, clear, stats)
+- [x] Add per-mutation debug logging to all 6 mutation functions in `Scalpel.py`
+- [x] Add transaction commit/rollback logging in `Transaction` class
+- [x] Export `get_ring` from `pyprobe.core.__init__` and `pyprobe.__init__`
+- [x] Write tests for `LogRing` (write, flush, overflow, peek, clear, stats)
 
 ## Cleanup
 
