@@ -9,8 +9,6 @@ Includes CPython 3.12+ PyLongObject bitfield fixes.
 import ctypes
 import types
 import gc
-import importlib.util
-import os
 import sys
 from contextlib import contextmanager
 from typing import Tuple, Any
@@ -34,17 +32,7 @@ from pyprobe.core.safety import (
 )
 
 
-def _get_ring():
-    """Lazy-load get_ring from log.py to avoid circular imports."""
-    import sys as _sys
-    if "pyprobe.core.log" in _sys.modules:
-        return _sys.modules["pyprobe.core.log"].get_ring()
-    _log_path = os.path.join(os.path.dirname(__file__), "log.py")
-    _spec = importlib.util.spec_from_file_location("pyprobe.core.log", _log_path)
-    _mod = importlib.util.module_from_spec(_spec)
-    _sys.modules["pyprobe.core.log"] = _mod
-    _spec.loader.exec_module(_mod)
-    return _mod.get_ring()
+from pyprobe.core.log import get_ring as _get_ring
 
 
 # Globally cache the memory addresses of Python's small integers at load time
@@ -157,6 +145,64 @@ def assert_safe(obj: Any, stack_depth: int = 3, verify_after: bool = True) -> No
         )
 
 
+# ── Dict Slot Discovery ─────────────────────────────────────────────────────
+
+def _find_dict_slot(target: dict, value_id: int) -> Optional[int]:
+    """Find the memory address of the value slot for a given value ID in a dict.
+
+    CPython dicts can be either combined (small, values inline in ma_keys)
+    or split (large/3.12+, values in separate ma_values array). This helper
+    scans the appropriate structure and returns the slot address, or None.
+
+    Args:
+        target: The dict to scan.
+        value_id: The id() of the value to search for.
+
+    Returns:
+        Memory address of the slot containing value_id, or None if not found.
+    """
+    d_addr = id(target)
+    assert DICT_LAYOUT is not None
+    ma_keys_ptr = ctypes.c_void_p.from_address(
+        d_addr + DICT_LAYOUT["ma_keys_offset"]
+    ).value
+    assert ma_keys_ptr is not None
+
+    ma_values_offset = DICT_LAYOUT["ma_keys_offset"] - 8
+    ma_values_ptr = ctypes.c_void_p.from_address(d_addr + ma_values_offset).value
+
+    if ma_values_ptr is not None:
+        # Split dict (CPython 3.12+): values in separate ma_values array
+        scan_limit = len(target) * 8
+        for offset in range(0, scan_limit, 8):
+            try:
+                ptr = ctypes.c_void_p.from_address(ma_values_ptr + offset).value
+                if ptr == value_id:
+                    candidate = ma_values_ptr + offset
+                    if candidate < 0x1000 or candidate & 7:
+                        continue
+                    return candidate
+            except Exception:
+                pass
+    else:
+        # Compact dict: values interleaved in ma_keys
+        entry_size = DICT_LAYOUT["entry_size"]
+        first_val_off = DICT_LAYOUT["first_value_offset"]
+        scan_limit = len(target) * entry_size * 4
+        for offset in range(first_val_off, scan_limit, entry_size):
+            try:
+                ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
+                if ptr == value_id:
+                    candidate = ma_keys_ptr + offset
+                    if candidate < 0x1000 or candidate & 7:
+                        continue
+                    return candidate
+            except Exception:
+                pass
+
+    return None
+
+
 # ── Transaction ─────────────────────────────────────────────────────────────
 
 from contextlib import contextmanager
@@ -243,51 +289,7 @@ class Transaction:
         # After swap, the slot holds the NEW value. Find it and swap back.
         current_val_id = id(target[key])
 
-        d_addr = id(target)
-        assert DICT_LAYOUT is not None
-        ma_keys_ptr = ctypes.c_void_p.from_address(
-            d_addr + DICT_LAYOUT["ma_keys_offset"]
-        ).value
-        assert ma_keys_ptr is not None
-
-        # Read ma_values from the dict struct (not keys object).
-        # For combined dicts (small), ma_values is NULL — values inline in keys.
-        # For split dicts (large, CPython 3.12+), ma_values points to separate array.
-        ma_values_offset = DICT_LAYOUT["ma_keys_offset"] - 8
-        ma_values_ptr = ctypes.c_void_p.from_address(d_addr + ma_values_offset).value
-
-        slot = None
-
-        if ma_values_ptr is not None:
-            # Split dict: scan ma_values for the current value pointer
-            scan_limit = len(target) * 8
-            for offset in range(0, scan_limit, 8):
-                try:
-                    ptr = ctypes.c_void_p.from_address(ma_values_ptr + offset).value
-                    if ptr == current_val_id:
-                        candidate = ma_values_ptr + offset
-                        if candidate < 0x1000 or candidate & 7:
-                            continue
-                        slot = candidate
-                        break
-                except Exception:
-                    pass
-        else:
-            # Compact dict: values interleaved in ma_keys
-            entry_size = DICT_LAYOUT["entry_size"]
-            first_val_off = DICT_LAYOUT["first_value_offset"]
-            scan_limit = len(target) * entry_size * 4
-            for offset in range(first_val_off, scan_limit, entry_size):
-                try:
-                    ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
-                    if ptr == current_val_id:
-                        candidate = ma_keys_ptr + offset
-                        if candidate < 0x1000 or candidate & 7:
-                            continue
-                        slot = candidate
-                        break
-                except Exception:
-                    pass
+        slot = _find_dict_slot(target, current_val_id)
 
         if slot is None:
             return  # best-effort: slot not found
@@ -529,47 +531,7 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any, 
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
-    assert DICT_LAYOUT is not None
-    ma_keys_ptr = ctypes.c_void_p.from_address(
-        d_addr + DICT_LAYOUT["ma_keys_offset"]
-    ).value
-    assert ma_keys_ptr is not None
-
-    first_val_off = DICT_LAYOUT["first_value_offset"]
-    ma_values_offset = DICT_LAYOUT["ma_keys_offset"] - 8
-    ma_values_ptr = ctypes.c_void_p.from_address(d_addr + ma_values_offset).value
-
-    target_slot_addr = None
-
-    if ma_values_ptr is not None:
-        # Split dict (CPython 3.12+): values in separate ma_values array
-        scan_limit = len(target_dict) * 8
-        for offset in range(0, scan_limit, 8):
-            try:
-                ptr = ctypes.c_void_p.from_address(ma_values_ptr + offset).value
-                if ptr == old_val_id:
-                    candidate = ma_values_ptr + offset
-                    if candidate < 0x1000 or candidate & 7:
-                        continue
-                    target_slot_addr = candidate
-                    break
-            except Exception:
-                pass
-    else:
-        # Compact dict: values interleaved in ma_keys
-        entry_size = DICT_LAYOUT["entry_size"]
-        scan_limit = len(target_dict) * entry_size * 4
-        for offset in range(first_val_off, scan_limit, entry_size):
-            try:
-                ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
-                if ptr == old_val_id:
-                    candidate = ma_keys_ptr + offset
-                    if candidate < 0x1000 or candidate & 7:
-                        continue
-                    target_slot_addr = candidate
-                    break
-            except Exception:
-                pass
+    target_slot_addr = _find_dict_slot(target_dict, old_val_id)
 
     if not target_slot_addr:
         raise PyProbeIntegrityError("Could not locate value pointer in memory.")

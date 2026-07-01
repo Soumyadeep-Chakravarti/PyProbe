@@ -1,26 +1,11 @@
 import ctypes
-import importlib.util
 import os
 from typing import Any, Optional
 
 from pyprobe.core.common import PyProbeError
 
 
-def _get_ring():
-    """Lazy-load get_ring from log.py to avoid circular imports with pyprobe.core.__init__.
-
-    Caches the loaded module in sys.modules so subsequent imports of
-    pyprobe.core.log reuse the same singleton ring.
-    """
-    import sys
-    if "pyprobe.core.log" in sys.modules:
-        return sys.modules["pyprobe.core.log"].get_ring()
-    _log_path = os.path.join(os.path.dirname(__file__), "log.py")
-    _spec = importlib.util.spec_from_file_location("pyprobe.core.log", _log_path)
-    _mod = importlib.util.module_from_spec(_spec)
-    sys.modules["pyprobe.core.log"] = _mod
-    _spec.loader.exec_module(_mod)
-    return _mod.get_ring()
+from pyprobe.core.log import get_ring as _get_ring
 
 
 def is_readable_ptr(ptr: int | None) -> bool:
