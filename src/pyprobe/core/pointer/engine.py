@@ -104,6 +104,13 @@ for _name in dir(builtins):
     if isinstance(_obj, type) and issubclass(_obj, BaseException):
         _EXCEPTION_NAMES.add(_name)
 
+# Container types that require visited-set tracking (frozen at module load)
+_CONTAINER_NAMES: frozenset[str] = frozenset({
+    "list", "tuple", "dict", "set", "frozenset", "range",
+    "slice", "function", "module", "cell", "property",
+    "staticmethod", "classmethod", "generator", "enumerate",
+})
+
 # Cached lookups for performance
 _TYPE_NAME_CACHE: Dict[int, str] = {}
 
@@ -114,6 +121,10 @@ _UNSET = object()
 
 class Pointer:
     """Memory introspection pointer for CPython objects."""
+
+    # Class-level extractor table (populated after class definition)
+    # Uses unbound methods — bound at dispatch time via extractor(self, addr, ...)
+    _EXTRACTORS: Dict[str, Any] = {}
 
     def __init__(self, target: Any = _UNSET, *, address: Optional[int] = None, safe: bool = True) -> None:
         has_target = target is not _UNSET
@@ -135,82 +146,6 @@ class Pointer:
 
         self.header_size = 16
         self.data_addr: int = self.address + self.header_size
-
-        self._extractors: Dict[str, Any] = {
-            "int": self._extract_int,
-            "float": self._extract_float,
-            "complex": self._extract_complex,
-            "str": self._extract_string,
-            "tuple": self._extract_tuple,
-            "list": self._extract_list,
-            "dict": self._extract_dict,
-            "bytes": self._extract_bytes,
-            "bytearray": self._extract_bytearray,
-            "memoryview": self._extract_memoryview,
-            "set": self._extract_set,
-            "frozenset": self._extract_set,
-            "bool": self._extract_bool,
-            "NoneType": self._extract_none,
-            "range": self._extract_range,
-            "slice": self._extract_slice,
-            "function": self._extract_function,
-            "type": self._extract_type,
-            "module": self._extract_module,
-            "code": self._extract_code,
-            "cell": self._extract_cell,
-            "property": self._extract_property,
-            "staticmethod": self._extract_staticmethod,
-            "classmethod": self._extract_classmethod,
-            "builtin_function_or_method": self._extract_builtin_function,
-            "generator": self._extract_generator,
-            "enumerate": self._extract_enumerate,
-            "BaseException": self._extract_exception,
-            "Exception": self._extract_exception,
-            "StopIteration": self._extract_exception,
-            "ArithmeticError": self._extract_exception,
-            "AssertionError": self._extract_exception,
-            "AttributeError": self._extract_exception,
-            "BlockingIOError": self._extract_exception,
-            "BrokenPipeError": self._extract_exception,
-            "ConnectionError": self._extract_exception,
-            "EOFError": self._extract_exception,
-            "FileExistsError": self._extract_exception,
-            "FileNotFoundError": self._extract_exception,
-            "FloatingPointError": self._extract_exception,
-            "GeneratorExit": self._extract_exception,
-            "IOError": self._extract_exception,
-            "ImportError": self._extract_exception,
-            "IndentationError": self._extract_exception,
-            "IndexError": self._extract_exception,
-            "IsADirectoryError": self._extract_exception,
-            "KeyError": self._extract_exception,
-            "LookupError": self._extract_exception,
-            "MemoryError": self._extract_exception,
-            "ModuleNotFoundError": self._extract_exception,
-            "NameError": self._extract_exception,
-            "NotADirectoryError": self._extract_exception,
-            "NotImplementedError": self._extract_exception,
-            "OSError": self._extract_exception,
-            "OverflowError": self._extract_exception,
-            "PermissionError": self._extract_exception,
-            "ProcessLookupError": self._extract_exception,
-            "RecursionError": self._extract_exception,
-            "ReferenceError": self._extract_exception,
-            "RuntimeError": self._extract_exception,
-            "SyntaxError": self._extract_exception,
-            "SystemError": self._extract_exception,
-            "SystemExit": self._extract_exception,
-            "TabError": self._extract_exception,
-            "TimeoutError": self._extract_exception,
-            "TypeError": self._extract_exception,
-            "UnboundLocalError": self._extract_exception,
-            "UnicodeDecodeError": self._extract_exception,
-            "UnicodeEncodeError": self._extract_exception,
-            "UnicodeError": self._extract_exception,
-            "UnicodeTranslateError": self._extract_exception,
-            "ValueError": self._extract_exception,
-            "ZeroDivisionError": self._extract_exception,
-        }
 
         self.lens = self._get_lens()
 
@@ -684,20 +619,16 @@ class Pointer:
         try:
             _, type_name = self._get_type_info(actual_addr)
 
-            is_container = type_name in [
-                "list", "tuple", "dict", "set", "frozenset", "range",
-                "slice", "function", "module", "cell", "property",
-                "staticmethod", "classmethod", "generator", "enumerate",
-            ]
+            is_container = type_name in _CONTAINER_NAMES
             is_exception = type_name in _EXCEPTION_NAMES
             if is_container or is_exception:
                 visited.add(actual_addr)
 
-            extractor = self._extractors.get(type_name)
+            extractor = self._EXTRACTORS.get(type_name)
             if extractor:
                 if is_container or is_exception:
-                    return extractor(actual_addr, visited, depth)
-                return extractor(actual_addr)
+                    return extractor(self, actual_addr, visited, depth)
+                return extractor(self, actual_addr)
 
             return f"<{type_name} @ {hex(actual_addr)}>"
         except Exception as e:
@@ -731,9 +662,9 @@ class Pointer:
         """Swap a list item by hot-swapping the memory pointer."""
         Scalpel.safe_list_swap(target_list, index, new_obj, safe=self._safe)
 
-    def safe_dict_value_swap(self, target_dict: dict[Any, Any], key: object, new_addr: int) -> None:
+    def safe_dict_value_swap(self, target_dict: dict[Any, Any], key: Any, new_value: Any) -> None:
         """Swap a dict value pointer."""
-        Scalpel.safe_dict_value_swap(target_dict, key, new_addr, safe=self._safe)
+        Scalpel.safe_dict_value_swap(target_dict, key, new_value, safe=self._safe)
 
     def mutate_batch(
         self,
@@ -954,3 +885,81 @@ class Pointer:
 
         self._print_logical_data()
         self._print_raw_memory(raw_bytes, dump_size)
+
+
+# ── Populate class-level extractor table (after class definition) ──────────
+Pointer._EXTRACTORS = {
+    "int": Pointer._extract_int,
+    "float": Pointer._extract_float,
+    "complex": Pointer._extract_complex,
+    "str": Pointer._extract_string,
+    "tuple": Pointer._extract_tuple,
+    "list": Pointer._extract_list,
+    "dict": Pointer._extract_dict,
+    "bytes": Pointer._extract_bytes,
+    "bytearray": Pointer._extract_bytearray,
+    "memoryview": Pointer._extract_memoryview,
+    "set": Pointer._extract_set,
+    "frozenset": Pointer._extract_set,
+    "bool": Pointer._extract_bool,
+    "NoneType": Pointer._extract_none,
+    "range": Pointer._extract_range,
+    "slice": Pointer._extract_slice,
+    "function": Pointer._extract_function,
+    "type": Pointer._extract_type,
+    "module": Pointer._extract_module,
+    "code": Pointer._extract_code,
+    "cell": Pointer._extract_cell,
+    "property": Pointer._extract_property,
+    "staticmethod": Pointer._extract_staticmethod,
+    "classmethod": Pointer._extract_classmethod,
+    "builtin_function_or_method": Pointer._extract_builtin_function,
+    "generator": Pointer._extract_generator,
+    "enumerate": Pointer._extract_enumerate,
+    "BaseException": Pointer._extract_exception,
+    "Exception": Pointer._extract_exception,
+    "StopIteration": Pointer._extract_exception,
+    "ArithmeticError": Pointer._extract_exception,
+    "AssertionError": Pointer._extract_exception,
+    "AttributeError": Pointer._extract_exception,
+    "BlockingIOError": Pointer._extract_exception,
+    "BrokenPipeError": Pointer._extract_exception,
+    "ConnectionError": Pointer._extract_exception,
+    "EOFError": Pointer._extract_exception,
+    "FileExistsError": Pointer._extract_exception,
+    "FileNotFoundError": Pointer._extract_exception,
+    "FloatingPointError": Pointer._extract_exception,
+    "GeneratorExit": Pointer._extract_exception,
+    "IOError": Pointer._extract_exception,
+    "ImportError": Pointer._extract_exception,
+    "IndentationError": Pointer._extract_exception,
+    "IndexError": Pointer._extract_exception,
+    "IsADirectoryError": Pointer._extract_exception,
+    "KeyError": Pointer._extract_exception,
+    "LookupError": Pointer._extract_exception,
+    "MemoryError": Pointer._extract_exception,
+    "ModuleNotFoundError": Pointer._extract_exception,
+    "NameError": Pointer._extract_exception,
+    "NotADirectoryError": Pointer._extract_exception,
+    "NotImplementedError": Pointer._extract_exception,
+    "OSError": Pointer._extract_exception,
+    "OverflowError": Pointer._extract_exception,
+    "PermissionError": Pointer._extract_exception,
+    "ProcessLookupError": Pointer._extract_exception,
+    "RecursionError": Pointer._extract_exception,
+    "ReferenceError": Pointer._extract_exception,
+    "RuntimeError": Pointer._extract_exception,
+    "SyntaxError": Pointer._extract_exception,
+    "SystemError": Pointer._extract_exception,
+    "SystemExit": Pointer._extract_exception,
+    "TabError": Pointer._extract_exception,
+    "TimeoutError": Pointer._extract_exception,
+    "TypeError": Pointer._extract_exception,
+    "UnboundLocalError": Pointer._extract_exception,
+    "UnicodeDecodeError": Pointer._extract_exception,
+    "UnicodeEncodeError": Pointer._extract_exception,
+    "UnicodeError": Pointer._extract_exception,
+    "UnicodeTranslateError": Pointer._extract_exception,
+    "ValueError": Pointer._extract_exception,
+    "ZeroDivisionError": Pointer._extract_exception,
+}
