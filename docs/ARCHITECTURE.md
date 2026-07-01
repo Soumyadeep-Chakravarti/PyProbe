@@ -158,18 +158,18 @@ The `Pointer` class uses a dispatcher dictionary to route extraction to type-spe
 
 ```python
 class Pointer:
-    def __init__(self, ...):
-        self._extractors = {
-            'int': self._extract_int,
-            'float': self._extract_float,
-            'str': self._extract_string,
-            'list': self._extract_list,
-            'tuple': self._extract_tuple,
-            'dict': self._extract_dict,
-            'bytes': self._extract_bytes,
-            'set': self._extract_set,
-            'frozenset': self._extract_set,
-        }
+    # Class-level extractor table (recommended for v2.0)
+    _extractors: Dict[str, ExtractorFunc] = {
+        'int': Pointer._extract_int,
+        'float': Pointer._extract_float,
+        'str': Pointer._extract_string,
+        'list': Pointer._extract_list,
+        'tuple': Pointer._extract_tuple,
+        'dict': Pointer._extract_dict,
+        'bytes': Pointer._extract_bytes,
+        'set': Pointer._extract_set,
+        'frozenset': Pointer._extract_set,
+    }
 
     def pull_data_from_address(self, addr, ...):
         type_name = self._get_type_name(addr)
@@ -183,6 +183,8 @@ class Pointer:
 - Easy to extend with new types
 - Clear separation of extraction logic
 - Fallback for unknown types
+
+**Binding semantics**: All extractors are bound methods that only depend on `self`. Moving to class level is semantically equivalent — no closures or captures from `__init__` are used.
 
 ### 3. Singleton Discovery (Tombstone Detection)
 
@@ -427,12 +429,204 @@ python -m pytest tests/
 
 ---
 
+## Public API
+
+The top-level `pyprobe/__init__.py` exports:
+
+```python
+from .core import Pointer
+from .core.common import (
+    PyProbeError,
+    PyProbeFatalError,
+    PyProbeIntegrityError,
+    PyProbeSafetyError,
+    PyProbeSecurityError,
+    PyProbeWarning,
+)
+from .core.log import get_ring
+from .core.ux import explain, audit, audit_str, to_dict, to_json, compare, compare_str
+
+def pin(obj: Any, safe: bool = True) -> Pointer: ...
+def pin_addr(addr: int, safe: bool = True) -> Pointer: ...
+```
+
+**Note**: `__all__` is not defined. This is intentional — the package exposes only documented symbols, and wildcard imports (`from pyprobe import *`) are not expected. Adding `__all__` would be stylistic, not functional.
+
+---
+
 ## Performance Considerations
 
 1. **Type name caching**: `_TYPE_NAME_CACHE` avoids repeated type lookups
 2. **Lazy dummy discovery**: `_get_dummy_ptr()` only runs when needed
 3. **Direct memory access**: No Python API overhead for reading
 4. **Minimal object creation**: Lenses are applied in-place, not copied
+
+> **Note on `_TYPE_NAME_CACHE`**: This is an unbounded dict mapping `type_id → type_name`. In practice, it plateaus around a few thousand entries (one per unique type in the process). For long-running processes with dynamic class creation, consider periodic cache clearing. This is a bounded cache with a soft limit, not a memory leak.
+
+---
+
+## Memory Ownership
+
+One of the hardest problems in CPython tooling is **memory ownership**. When PyProbe reads or mutates memory, it must understand who owns that memory and what constraints apply.
+
+### Ownership Categories
+
+| Category | Description | Can Mutate? | Detection |
+|----------|-------------|-------------|-----------|
+| **Borrowed Reference** | Temporary reference from container (e.g., `list[i]`) | With care | Refcount check |
+| **Owned Reference** | Exclusive reference (refcount = 1) | Yes | Refcount == 1 |
+| **Immortal Object** | Never deallocated (PEP 683) | No | Refcount > 2^30 |
+| **Interned Object** | Shared singleton (strings, small ints) | No | Type-specific flags |
+| **Shared Object** | Multiple references (refcount > 1) | With extreme care | Refcount > 1 |
+
+### How PyProbe Models Ownership
+
+PyProbe uses a **three-tier safety model** (see [SAFETY_MODEL.md](./SAFETY_MODEL.md)):
+
+1. **Hard blocks** (`PyProbeSecurityError`): Immutable objects, interned strings, live bytecode — never bypassable
+2. **Soft blocks** (`PyProbeSafetyError`): Shared objects, cached ints — bypassable with `safe=False`
+3. **No check**: Owned objects with sole references — safe to mutate
+
+The `safe` parameter controls whether soft blocks fire:
+```python
+# This will raise PyProbeSafetyError if x is a cached int (0-256)
+ptr = pyprobe.pin(x)
+ptr.mutate_int(999)
+
+# This bypasses PyProbeSafetyError but not PyProbeSecurityError
+ptr = pyprobe.pin(x, safe=False)
+ptr.mutate_int(999)
+```
+
+### Limitations
+
+- **Borrowed references** are not explicitly tracked — PyProbe relies on the caller to ensure the container outlives the mutation
+- **Immortal object detection** is approximate (refcount threshold) — may have false positives on very large refcounts
+- **Interned string detection** requires type-specific logic per lens
+
+---
+
+## Failure Philosophy
+
+PyProbe's design reflects a specific philosophy about failure:
+
+> **Never corrupt memory. Let advanced users do dangerous things.**
+
+This creates a tension between safety and flexibility:
+
+### The Spectrum
+
+```
+Safe ◄────────────────────────────────────────────────► Dangerous
+
+  │                    │                    │
+  ▼                    ▼                    ▼
+PyProbeSecurityError  PyProbeSafetyError  safe=False
+(no bypass)           (bypassable)        (no checks)
+```
+
+### Design Decisions
+
+1. **Hard blocks are never bypassable**: If PyProbe detects an operation that would corrupt memory (e.g., mutating an interned string), it raises `PyProbeSecurityError` and there is no way to override this. This is non-negotiable.
+
+2. **Soft blocks are advisory**: `PyProbeSafetyError` warnings (e.g., "object has multiple references") can be bypassed with `safe=False`. The assumption is that the user has verified safety manually.
+
+3. **Rollback is best-effort**: When a mutation fails, PyProbe attempts to restore the original state. However, this is not atomic — if the process crashes mid-rollback, memory may be corrupted. This is an explicit tradeoff: atomic rollback would require OS-level support (e.g., `mprotect`) and is not portable.
+
+4. **No guarantees on concurrent access**: PyProbe does not use locks or atomics. Mutations are not thread-safe. The documentation states this clearly, and `comprehensive_safety_check` warns about shared references.
+
+### Why This Philosophy?
+
+PyProbe is a **systems debugging tool**, not a production runtime. Its users are:
+- CPython internals developers
+- Security researchers
+- Performance engineers
+- Debuggers and profilers
+
+These users need the ability to violate invariants for investigation. PyProbe provides guardrails but not handcuffs.
+
+---
+
+## Future Extensibility
+
+### Interpreter Support
+
+The offset discovery system was designed with portability in mind:
+
+| Interpreter | Status | Notes |
+|-------------|--------|-------|
+| **CPython 3.12+** | Supported | Primary target, all features |
+| **CPython 3.10-3.11** | Partial | Some offsets differ, tested |
+| **PyPy** | Not supported | Different memory model (JIT) |
+| **GraalPython** | Not supported | Different memory model (Java) |
+| **Debug CPython** | Not supported | Different struct layouts |
+| **Custom interpreters** | Not supported | Would require custom lenses |
+
+**Why CPython only?**
+
+PyProbe reads CPython's internal struct layouts directly via `ctypes`. These layouts are:
+- Version-specific (fields change between releases)
+- Implementation-specific (PyPy uses completely different structures)
+- Not part of Python's public API
+
+The offset discovery system (`offset_discovery.py`) probes memory to discover layout at runtime, which makes it resilient to minor version changes. However, it cannot adapt to fundamentally different memory models.
+
+### Adding New Types
+
+To add support for a new type (e.g., `collections.deque`):
+
+1. **Create a lens** in `src/pyprobe/raw/lenses/deque_lens.py`
+2. **Add an extractor** in `engine.py`
+3. **Register in the dispatcher** (`_extractors` dict)
+4. **Add tests** in `tests/test_collections.py`
+
+If the type is not in the dispatcher, `pull_data_from_address` returns `f"<{type_name} @ {hex(addr)}>"` — a graceful fallback.
+
+### Plugin Architecture (Conditional)
+
+A plugin system could allow external packages to register extractors:
+
+```python
+# Hypothetical future API
+import pyprobe
+from pyprobe.plugins import register_extractor
+
+@register_extractor("collections.deque")
+def extract_deque(addr, visited, depth):
+    ...
+```
+
+**When would this be useful?**
+- If supported types exceed ~30 (currently ~25)
+- If third-party packages want to add extractors without modifying PyProbe
+- If PyProbe is used as a library by other tools
+
+**Current assessment**: Not needed. The centralized engine is easier to audit, debug, and reason about. Plugin systems introduce registration, dynamic dispatch, and abstraction layers that increase cognitive load. For a systems debugging tool, auditability > modularity.
+
+**Recommendation**: Leave as "worth reconsidering if supported types exceed N" rather than a concrete recommendation. The current design is intentional, not accidental.
+
+---
+
+## Architectural Risk Score
+
+| Area | Risk | Rationale |
+|------|------|-----------|
+| **Offset Discovery** | Low | Probe-and-match is resilient; failure is loud (import-time crash) |
+| **Lenses** | Low | Pure data structures, no logic, no state |
+| **Safety Model** | Medium | Three-tier system is sound, but edge cases exist (immortal detection) |
+| **Transactions** | Medium | Best-effort rollback is inherently racy; test coverage is thin |
+| **Engine (Pointer)** | Medium | 956 LOC god object, but intentional for auditability |
+| **UX Module** | Low | Read-only, no mutation, no state |
+
+### Key Risks
+
+1. **CPython version drift**: Offsets discovered at runtime may break with CPython updates. Mitigation: probe-and-match fails loudly.
+
+2. **Concurrent mutation**: No thread-safety guarantees. Mitigation: documented, `comprehensive_safety_check` warns.
+
+3. **Rollback failure**: Best-effort rollback may leave memory corrupted if process crashes mid-rollback. Mitigation: use transactions only for batch operations, not individual mutations.
+
+4. **Test coverage gaps**: Transaction tests bypass safety layer (`safe=False`), property-based testing absent. Mitigation: add tests before v2.0.
 
 ---
 
@@ -461,6 +655,37 @@ To add extraction for a new type (e.g., `deque`):
 
 4. **Add tests** in `tests/test_collections.py`
 
+### Class-Level Extractor Table
+
+The `_extractors` dict is currently defined per-instance in `Pointer.__init__`. This is intentional but suboptimal:
+
+```python
+# Current: rebuilt per instance
+class Pointer:
+    def __init__(self, ...):
+        self._extractors = {
+            'int': self._extract_int,
+            'float': self._extract_float,
+            ...
+        }
+```
+
+**Could it be class-level?**
+
+Yes — all extractors are bound methods that only depend on `self`. Moving to class level would:
+- Reduce memory allocation (one dict vs. per-instance)
+- Improve cache locality
+- Be semantically equivalent
+
+**Why hasn't it been done?**
+
+The current design was chosen for:
+- Simplicity (no descriptor protocol complexity)
+- Future flexibility (instance-specific overrides possible)
+- Auditability (clear that extractors are per-Pointer)
+
+**Recommendation**: Move to class level before v2.0. Verify that no extractor uses closures or captures from `__init__` (none do currently).
+
 ---
 
 ## Dependencies
@@ -470,3 +695,49 @@ To add extraction for a new type (e.g., `deque`):
 **Development**: 
 - Python 3.12+ (required)
 - pytest (optional, for testing)
+
+---
+
+## Architectural Decision Records (ADRs)
+
+The following key decisions should be recorded as ADRs for future contributors:
+
+### ADR-001: Why Pointer is Centralized (Not Plugin-Based)
+
+**Context**: The `Pointer` class contains all extractors in a single 956-line file.
+
+**Decision**: Keep centralized for auditability.
+
+**Rationale**: Low-level memory libraries require careful reasoning about correctness. Plugin systems introduce dynamic dispatch, registration complexity, and harder debugging. For a systems debugging tool, auditability > modularity.
+
+**Consequences**: Adding new types requires modifying `engine.py`. This is acceptable for ~25 types.
+
+### ADR-002: Why Offset Discovery Happens at Import Time
+
+**Context**: `offset_discovery.py` probes memory to discover struct layouts at import time.
+
+**Decision**: Discover at import time, not first use.
+
+**Rationale**: Fails loudly on unsupported CPython versions. No partial initialization states. Users know immediately if PyProbe won't work.
+
+**Consequences**: Import is slower (~10ms), but this is a one-time cost.
+
+### ADR-003: Why Rollback is Best-Effort
+
+**Context**: `snapshot()` + `verify()` attempt to restore state on mutation failure.
+
+**Decision**: Best-effort rollback, not atomic.
+
+**Rationale**: Atomic rollback would require OS-level support (`mprotect`, `mmap`) and is not portable. PyProbe is a debugging tool, not a production runtime.
+
+**Consequences**: If the process crashes mid-rollback, memory may be corrupted. Users should use transactions for batch operations only.
+
+### ADR-004: Why Hard and Soft Safety Checks are Separated
+
+**Context**: `PyProbeSecurityError` (hard) vs `PyProbeSafetyError` (soft) have different bypass semantics.
+
+**Decision**: Three-tier safety model.
+
+**Rationale**: Some operations are always wrong (mutating interned strings). Others are conditionally safe (mutating shared objects with manual verification). The `safe` parameter controls only the soft tier.
+
+**Consequences**: Users can bypass soft blocks but not hard blocks. This is intentional — hard blocks protect against memory corruption.
