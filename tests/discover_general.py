@@ -1,8 +1,10 @@
 import ctypes
 
-d = {1: "a", 2: "b"} # Int keys
+d: dict[int, str] = {1: "a", 2: "b"} # Int keys
 addr = id(d)
-keys_addr = ctypes.c_void_p.from_address(addr + 32).value
+keys_addr: int | None = ctypes.c_void_p.from_address(addr + 32).value
+if keys_addr is None:
+	raise RuntimeError("Could not locate dict keys address.")
 metadata = ctypes.string_at(keys_addr, 32)
 start = 32 + (1 << metadata[9])
 entries = ctypes.string_at(keys_addr + start, 128)

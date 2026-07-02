@@ -1,9 +1,10 @@
 import ctypes
 
-
-d2 = {1: "a", 2.5: "b", (1,2): "c"} # General Keys
+d2: dict[object, str] = {1: "a", 2.5: "b", (1,2): "c"} # General Keys
 addr = id(d2)
-keys_addr = ctypes.c_void_p.from_address(addr + 32).value
+keys_addr: int | None = ctypes.c_void_p.from_address(addr + 32).value
+if keys_addr is None:
+	raise RuntimeError("Could not locate dict keys address.")
 metadata = ctypes.string_at(keys_addr, 32)
 print(f"Metadata bytes 8-11: {metadata[8:12].hex(' ')}")
 # Also audit entries

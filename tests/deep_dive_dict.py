@@ -6,6 +6,8 @@ from pyprobe.core.pointer.engine import Pointer
 
 d1 = {"a": 1, "b": 2}
 p = Pointer(d1)
+if p.lens is None:
+	raise RuntimeError("Pointer lens is unavailable.")
 # Inspect ma_keys metadata
 keys_addr = p.lens.ma_keys
 metadata = ctypes.string_at(keys_addr, 32)
@@ -19,5 +21,7 @@ print(f"Entries: {entries.hex(' ')}")
 # Manually read first entry
 k1 = ctypes.c_void_p.from_address(keys_addr + start).value
 v1 = ctypes.c_void_p.from_address(keys_addr + start + 8).value
+if k1 is None or v1 is None:
+	raise RuntimeError("Could not read first dict entry pointers.")
 print(f"Entry 0: Key={hex(k1)}, Val={hex(v1)}")
 print(f"ID 'a'={hex(id('a'))}, ID 1={hex(id(1))}")

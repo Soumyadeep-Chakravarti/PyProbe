@@ -1,9 +1,13 @@
-"""PyProbe Engine: High-speed memory introspection for CPython 3.14."""
+"""PyProbe — Memory Inspector
 
+High-speed memory introspection for CPython 3.14.
+"""
+
+import builtins
 import ctypes
 import sys
 import warnings
-from typing import Any, Callable, Dict, Optional, Tuple, Type, Union, cast
+from typing import Any, Dict, Optional, Tuple, Type, Union, cast
 
 from pyprobe.raw.headers.py_object import PyObjectHeader
 from pyprobe.raw.headers.py_type import PyTypeObject
@@ -24,6 +28,10 @@ from pyprobe.core.offset_discovery import (
     DICT_MA_KEYS_OFFSET,
 )
 
+# Type aliases
+VisitedSet = set[int]
+ExtractorFunc = Any  # Callable to extractor method
+
 # PyObject_HEAD
 HEADER_SIZE = 16
 
@@ -31,7 +39,7 @@ HEADER_SIZE = 16
 VAR_HEADER_SIZE = 24
 
 # Industrial Singleton Discovery
-_dummy_ptr: Optional[int] = None
+_dummy_ptr_cache: Optional[int] = None
 
 
 def _get_dummy_ptr() -> Optional[int]:
@@ -45,26 +53,26 @@ def _get_dummy_ptr() -> Optional[int]:
         The memory address of the <dummy> singleton, or None if it
         could not be located (with a warning).
     """
-    global _dummy_ptr
-    if _dummy_ptr is None:
+    global _dummy_ptr_cache
+    if _dummy_ptr_cache is None:
         try:
-            # We locate it via a temporary dict tombstone
             d = {0: 0}
             del d[0]
             addr = id(d)
-            dict_keys_offset = DICT_MA_KEYS_OFFSET
-            if dict_keys_offset is None:
-                return None
-            # ── CHANGE 4: Use discovered offset instead of hardcoded +32 ──
-            keys_addr = ctypes.c_void_p.from_address(addr + dict_keys_offset).value
-            if not keys_addr:
-                return None
-            # In 3.14, indices start at +32.
-            # Entry 0 key starts at +32 + indices_size + hash_offset
-            # For size 8, indices size is 8.
-            # General dict has hash(8) before key
-            # Total offset: 32 + 8 + 8 = 48.
-            _dummy_ptr = ctypes.c_void_p.from_address(keys_addr + 48).value
+            if DICT_MA_KEYS_OFFSET is not None:
+                keys_addr: Optional[int] = ctypes.c_void_p.from_address(
+                    addr + DICT_MA_KEYS_OFFSET
+                ).value
+                if keys_addr is not None:
+                    keys_lens = DictKeysLens.from_address(keys_addr)
+                    dk_kind = keys_lens.dk_kind
+                    is_unicode = dk_kind == 1
+                    log2_ix = keys_lens.dk_log2_index_bytes
+                    entries_start = 32 + (1 << log2_ix)
+                    key_offset = 0 if is_unicode else 8
+                    _dummy_ptr_cache = ctypes.c_void_p.from_address(
+                        keys_addr + entries_start + key_offset
+                    ).value
         except Exception as e:
             warnings.warn(
                 f"Failed to locate <dummy> singleton: {e}. "
@@ -72,12 +80,19 @@ def _get_dummy_ptr() -> Optional[int]:
                 RuntimeWarning,
                 stacklevel=2,
             )
-    return _dummy_ptr
+    return _dummy_ptr_cache
 
 
 # Architecture Guard
 if ctypes.sizeof(ctypes.c_void_p) != 8:
     raise RuntimeError("PyProbe currently only supports 64-bit CPython architectures.")
+
+# Pre-compute the set of all builtin exception type names for dynamic matching
+_EXCEPTION_NAMES: set[str] = set()
+for _name in dir(builtins):
+    _obj = getattr(builtins, _name, None)
+    if isinstance(_obj, type) and issubclass(_obj, BaseException):
+        _EXCEPTION_NAMES.add(_name)
 
 # Cached lookups for performance
 _TYPE_NAME_CACHE: Dict[int, str] = {}
@@ -110,7 +125,7 @@ class Pointer:
         self.header_size = 16
         self.data_addr: int = self.address + self.header_size
 
-        self._extractors = {
+        self._extractors: Dict[str, Any] = {
             "int": self._extract_int,
             "float": self._extract_float,
             "complex": self._extract_complex,
@@ -140,47 +155,70 @@ class Pointer:
             "enumerate": self._extract_enumerate,
             "BaseException": self._extract_exception,
             "Exception": self._extract_exception,
-            "ValueError": self._extract_exception,
-            "TypeError": self._extract_exception,
-            "KeyError": self._extract_exception,
-            "IndexError": self._extract_exception,
-            "AttributeError": self._extract_exception,
-            "RuntimeError": self._extract_exception,
             "StopIteration": self._extract_exception,
-            "OSError": self._extract_exception,
-            "ImportError": self._extract_exception,
-            "NameError": self._extract_exception,
-            "ZeroDivisionError": self._extract_exception,
-            "FileNotFoundError": self._extract_exception,
-            "FileExistsError": self._extract_exception,
-            "PermissionError": self._extract_exception,
-            "IsADirectoryError": self._extract_exception,
-            "NotADirectoryError": self._extract_exception,
-            "TimeoutError": self._extract_exception,
-            "ConnectionError": self._extract_exception,
-            "BrokenPipeError": self._extract_exception,
+            "ArithmeticError": self._extract_exception,
             "AssertionError": self._extract_exception,
+            "AttributeError": self._extract_exception,
+            "BlockingIOError": self._extract_exception,
+            "BrokenPipeError": self._extract_exception,
+            "ConnectionError": self._extract_exception,
+            "EOFError": self._extract_exception,
+            "FileExistsError": self._extract_exception,
+            "FileNotFoundError": self._extract_exception,
+            "FloatingPointError": self._extract_exception,
+            "GeneratorExit": self._extract_exception,
+            "IOError": self._extract_exception,
+            "ImportError": self._extract_exception,
+            "IndentationError": self._extract_exception,
+            "IndexError": self._extract_exception,
+            "IsADirectoryError": self._extract_exception,
+            "KeyError": self._extract_exception,
             "LookupError": self._extract_exception,
-            "SyntaxError": self._extract_exception,
+            "MemoryError": self._extract_exception,
             "ModuleNotFoundError": self._extract_exception,
-            "UnboundLocalError": self._extract_exception,
+            "NameError": self._extract_exception,
+            "NotADirectoryError": self._extract_exception,
+            "NotImplementedError": self._extract_exception,
+            "OSError": self._extract_exception,
+            "OverflowError": self._extract_exception,
+            "PermissionError": self._extract_exception,
+            "ProcessLookupError": self._extract_exception,
             "RecursionError": self._extract_exception,
+            "ReferenceError": self._extract_exception,
+            "RuntimeError": self._extract_exception,
+            "SyntaxError": self._extract_exception,
+            "SystemError": self._extract_exception,
+            "SystemExit": self._extract_exception,
+            "TabError": self._extract_exception,
+            "TimeoutError": self._extract_exception,
+            "TypeError": self._extract_exception,
+            "UnboundLocalError": self._extract_exception,
+            "UnicodeDecodeError": self._extract_exception,
+            "UnicodeEncodeError": self._extract_exception,
+            "UnicodeError": self._extract_exception,
+            "UnicodeTranslateError": self._extract_exception,
+            "ValueError": self._extract_exception,
+            "ZeroDivisionError": self._extract_exception,
         }
 
         self.lens = self._get_lens()
 
     def _extract_dict(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[Any, Any]:
         """Extract dictionary items using surgical DictLens."""
         lens = DictLens.from_address(addr + HEADER_SIZE)
         if not lens.ma_keys:
             return {}
 
+        base_addr_val = ctypes.cast(lens.ma_keys, ctypes.c_void_p).value
+        if not base_addr_val:
+            return {}
+
         values_ptr = lens.ma_values
         is_split = values_ptr is not None
-        values_array = (
-            ctypes.cast(values_ptr + 8, ctypes.POINTER(ctypes.c_void_p))
+        values_array: Optional[Any] = (
+            ctypes.cast(values_ptr, ctypes.POINTER(ctypes.c_void_p))
             if is_split
             else None
         )
@@ -188,12 +226,11 @@ class Pointer:
         keys_addr = lens.ma_keys
         keys_obj = DictKeysLens.from_address(keys_addr)
 
-        entries_start_offset, _, is_unicode, _ = self._get_dict_geometry(
-            ctypes.cast(keys_addr, ctypes.POINTER(DictKeysLens))
-        )
+        keys_ptr: Any = ctypes.cast(keys_addr, ctypes.POINTER(DictKeysLens))
+        entries_start_offset, _, is_unicode, _ = self._get_dict_geometry(keys_ptr)
         stride = self._get_entry_stride(is_unicode, is_split)
 
-        result: dict[str, Any] = {}
+        result: Dict[Any, Any] = {}
         dummy_ptr = _get_dummy_ptr()
         for i in range(keys_obj.dk_nentries):
             entry_addr = keys_addr + entries_start_offset + (i * stride)
@@ -228,10 +265,8 @@ class Pointer:
         cls = lenses.get(self.type_name)
         return cls.from_address(self.address + self.header_size) if cls else None
 
-    def _normalize_address(self, addr: Union[int, ctypes.c_void_p, None]) -> Optional[int]:
+    def _normalize_address(self, addr: Union[int, ctypes.c_void_p]) -> Optional[int]:
         """Convert address to integer format."""
-        if addr is None:
-            return None
         actual_addr = addr.value if isinstance(addr, ctypes.c_void_p) else addr
         return actual_addr if actual_addr and actual_addr != 0 else None
 
@@ -263,11 +298,9 @@ class Pointer:
         except Exception:
             return None, f"<Read Error {hex(addr)}>"
 
-    def _extract_int(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> int:
+    def _extract_int(self, addr: int) -> int:
         """Extract integer value (PyLongObject)."""
-        tag = ctypes.c_size_t.from_address(addr + HEADER_SIZE).value
+        tag = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         size = tag >> 3
         if size == 0:
             return 0
@@ -278,15 +311,11 @@ class Pointer:
             result += digits_array[i] * (1 << (30 * i))
         return -result if negative else result
 
-    def _extract_float(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> float:
+    def _extract_float(self, addr: int) -> float:
         """Extract float value using FloatLens."""
         return FloatLens.from_address(addr + HEADER_SIZE).ob_fval
 
-    def _extract_string(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> str:
+    def _extract_string(self, addr: int) -> str:
         """Extract string value using StringLens abstractions."""
         lens = StringLens.from_address(addr + HEADER_SIZE)
         kind = lens.kind
@@ -311,7 +340,7 @@ class Pointer:
             return f"<Error decoding str: {e}>"
 
     def _extract_tuple(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> tuple[Any, ...]:
         """Extract tuple items using dynamically discovered offset."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
@@ -325,7 +354,7 @@ class Pointer:
         )
 
     def _extract_list(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> list[Any]:
         """Extract list items using dynamically discovered offset."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
@@ -339,15 +368,13 @@ class Pointer:
             for i in range(size)
         ]
 
-    def _extract_bytes(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> bytes:
+    def _extract_bytes(self, addr: int) -> bytes:
         """Extract bytes data structure."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         return ctypes.string_at(addr + VAR_HEADER_SIZE + 8, size)
 
     def _extract_set(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> set[Any]:
         """Extract set using surgical lens — unchanged, already works."""
         lens = SetLens.from_address(addr + self.header_size)
@@ -365,57 +392,49 @@ class Pointer:
                 result.add(val)
         return result
 
-    def _extract_bool(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> bool:
+    def _extract_bool(self, addr: int) -> bool:
         """Extract boolean value."""
         int_val = self._extract_int(addr)
         return bool(int_val)
 
-    def _extract_none(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> None:
+    def _extract_none(self, addr: int) -> None:
         """Extract None singleton."""
         return None
 
-    def _extract_complex(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> complex:
+    def _extract_complex(self, addr: int) -> complex:
         """Extract complex number."""
         real = ctypes.c_double.from_address(addr + HEADER_SIZE).value
         imag = ctypes.c_double.from_address(addr + HEADER_SIZE + 8).value
         return complex(real, imag)
 
     def _extract_range(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> range:
         """Extract range object."""
-        start_ptr = ctypes.c_void_p.from_address(addr + HEADER_SIZE).value
-        stop_ptr = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 8).value
-        step_ptr = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 16).value
-        start = self.pull_data_from_address(start_ptr, visited, depth + 1) if start_ptr is not None else 0
-        stop = self.pull_data_from_address(stop_ptr, visited, depth + 1) if stop_ptr is not None else 0
-        step = self.pull_data_from_address(step_ptr, visited, depth + 1) if step_ptr is not None else 1
+        start_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE).value
+        stop_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 8).value
+        step_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 16).value
+        start = self.pull_data_from_address(start_ptr or 0, visited, depth + 1) if start_ptr else 0
+        stop = self.pull_data_from_address(stop_ptr or 0, visited, depth + 1) if stop_ptr else 0
+        step = self.pull_data_from_address(step_ptr or 1, visited, depth + 1) if step_ptr else 1
         return range(start, stop, step)
 
     def _extract_slice(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> slice[Any, Any, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> slice:
         """Extract slice object."""
-        start_ptr = ctypes.c_void_p.from_address(addr + HEADER_SIZE).value
-        stop_ptr = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 8).value
-        step_ptr = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 16).value
-        start = self.pull_data_from_address(start_ptr, visited, depth + 1) if start_ptr is not None else "NULL"
-        stop = self.pull_data_from_address(stop_ptr, visited, depth + 1) if stop_ptr is not None else "NULL"
-        step = self.pull_data_from_address(step_ptr, visited, depth + 1) if step_ptr is not None else "NULL"
+        start_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE).value
+        stop_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 8).value
+        step_ptr: Optional[int] = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 16).value
+        start = self.pull_data_from_address(start_ptr or 0, visited, depth + 1) if start_ptr else None
+        stop = self.pull_data_from_address(stop_ptr or 0, visited, depth + 1) if stop_ptr else None
+        step = self.pull_data_from_address(step_ptr or 0, visited, depth + 1) if step_ptr else None
         start = None if start == "NULL" else start
         stop = None if stop == "NULL" else stop
         step = None if step == "NULL" else step
         return slice(start, stop, step)
 
-    def _extract_bytearray(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> bytearray:
+    def _extract_bytearray(self, addr: int) -> bytearray:
         """Extract bytearray data."""
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         ob_start = ctypes.c_void_p.from_address(addr + HEADER_SIZE + 24).value
@@ -424,9 +443,7 @@ class Pointer:
         data = ctypes.string_at(ob_start, size)
         return bytearray(data)
 
-    def _extract_memoryview(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> bytes:
+    def _extract_memoryview(self, addr: int) -> bytes:
         """Extract memoryview contents as bytes."""
         buf_ptr = ctypes.c_void_p.from_address(addr + 56).value
         length = ctypes.c_ssize_t.from_address(addr + 72).value
@@ -435,32 +452,30 @@ class Pointer:
         return ctypes.string_at(buf_ptr, length)
 
     def _extract_function(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract function object metadata."""
-        result: dict[str, Any] = {"__type__": "function"}
+        result = {"__type__": "function"}
         name_ptr = ctypes.c_void_p.from_address(addr + 32).value
-        if name_ptr is not None:
+        if name_ptr:
             result["__name__"] = self.pull_data_from_address(name_ptr, visited, depth + 1)
         qualname_ptr = ctypes.c_void_p.from_address(addr + 40).value
-        if qualname_ptr is not None:
+        if qualname_ptr:
             result["__qualname__"] = self.pull_data_from_address(qualname_ptr, visited, depth + 1)
         defaults_ptr = ctypes.c_void_p.from_address(addr + 56).value
-        if defaults_ptr is not None:
+        if defaults_ptr:
             result["__defaults__"] = self.pull_data_from_address(defaults_ptr, visited, depth + 1)
         doc_ptr = ctypes.c_void_p.from_address(addr + 80).value
-        if doc_ptr is not None:
+        if doc_ptr:
             result["__doc__"] = self.pull_data_from_address(doc_ptr, visited, depth + 1)
         module_ptr = ctypes.c_void_p.from_address(addr + 104).value
-        if module_ptr is not None:
+        if module_ptr:
             result["__module__"] = self.pull_data_from_address(module_ptr, visited, depth + 1)
         return result
 
-    def _extract_type(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+    def _extract_type(self, addr: int) -> Dict[str, Any]:
         """Extract type object metadata."""
-        result: dict[str, Any] = {"__type__": "type"}
+        result = {"__type__": "type"}
         try:
             tp_name_ptr = ctypes.c_char_p.from_address(addr + 24).value
             if tp_name_ptr:
@@ -472,20 +487,20 @@ class Pointer:
         return result
 
     def _extract_module(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract module object metadata."""
-        result: dict[str, Any] = {"__type__": "module"}
+        result: Dict[str, Any] = {"__type__": "module"}
         try:
             dict_ptr = ctypes.c_void_p.from_address(addr + 16).value
-            if dict_ptr is not None:
+            if dict_ptr:
                 md_dict = self.pull_data_from_address(dict_ptr, visited, depth + 1)
                 if isinstance(md_dict, dict):
-                    md_dict_typed: dict[str, Any] = cast(dict[str, Any], md_dict)
-                    result["__name__"] = md_dict_typed.get("__name__", "<unknown>")
+                    md_dict_typed = cast(Dict[Any, Any], md_dict)
+                    result["__name__"] = str(md_dict_typed.get("__name__", "<unknown>"))
                     result["__doc__"] = md_dict_typed.get("__doc__")
                     result["__file__"] = md_dict_typed.get("__file__")
-                    keys = [str(key) for key in md_dict_typed.keys()]
+                    keys: list[Any] = list(md_dict_typed.keys())
                     result["__dict_keys__"] = keys[:20]
                     if len(keys) > 20:
                         result["__dict_keys__"].append(f"... and {len(keys) - 20} more")
@@ -500,33 +515,31 @@ class Pointer:
             result["__dict_keys__"] = []
         return result
 
-    def _extract_code(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+    def _extract_code(self, addr: int) -> Dict[str, Any]:
         """Extract code object metadata."""
-        result: dict[str, Any] = {"__type__": "code"}
+        result = {"__type__": "code"}
         try:
             consts_ptr = ctypes.c_void_p.from_address(addr + 24).value
             filename_ptr = ctypes.c_void_p.from_address(addr + 112).value
             name_ptr = ctypes.c_void_p.from_address(addr + 120).value
-            if name_ptr is not None:
+            if name_ptr:
                 result["co_name"] = self.pull_data_from_address(name_ptr)
-            if filename_ptr is not None:
+            if filename_ptr:
                 result["co_filename"] = self.pull_data_from_address(filename_ptr)
-            if consts_ptr is not None:
+            if consts_ptr:
                 result["co_consts"] = self.pull_data_from_address(consts_ptr)
         except Exception as e:
             result["error"] = str(e)
         return result
 
     def _extract_cell(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract cell object."""
-        result: dict[str, Any] = {"__type__": "cell"}
+        result = {"__type__": "cell"}
         try:
             content_ptr = ctypes.c_void_p.from_address(addr + 16).value
-            if content_ptr is not None:
+            if content_ptr:
                 result["cell_contents"] = self.pull_data_from_address(content_ptr, visited, depth + 1)
             else:
                 result["cell_contents"] = "<empty cell>"
@@ -535,79 +548,77 @@ class Pointer:
         return result
 
     def _extract_exception(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract exception object."""
-        result: dict[str, Any] = {"__type__": "exception"}
+        result: Dict[str, Any] = {"__type__": "exception"}
         try:
             _, type_name = self._get_type_info(addr)
             result["exception_type"] = type_name
             args_ptr = ctypes.c_void_p.from_address(addr + 24).value
-            if args_ptr is not None:
+            if args_ptr:
                 result["args"] = self.pull_data_from_address(args_ptr, visited, depth + 1)
             else:
-                result["args"] = ()
+                result["args"] = tuple()
         except Exception as e:
             result["exception_type"] = "<unknown>"
             result["args"] = (f"<error extracting: {e}>",)
         return result
 
     def _extract_property(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract property descriptor."""
-        result: dict[str, Any] = {"__type__": "property"}
+        result = {"__type__": "property"}
         try:
             fget_ptr = ctypes.c_void_p.from_address(addr + 16).value
             fset_ptr = ctypes.c_void_p.from_address(addr + 24).value
             fdel_ptr = ctypes.c_void_p.from_address(addr + 32).value
             doc_ptr = ctypes.c_void_p.from_address(addr + 40).value
-            if fget_ptr is not None:
+            if fget_ptr:
                 result["fget"] = self.pull_data_from_address(fget_ptr, visited, depth + 1)
-            if fset_ptr is not None:
+            if fset_ptr:
                 result["fset"] = self.pull_data_from_address(fset_ptr, visited, depth + 1)
-            if fdel_ptr is not None:
+            if fdel_ptr:
                 result["fdel"] = self.pull_data_from_address(fdel_ptr, visited, depth + 1)
-            if doc_ptr is not None:
+            if doc_ptr:
                 result["__doc__"] = self.pull_data_from_address(doc_ptr, visited, depth + 1)
         except Exception as e:
             result["error"] = str(e)
         return result
 
     def _extract_staticmethod(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract staticmethod descriptor."""
-        result: dict[str, Any] = {"__type__": "staticmethod"}
+        result = {"__type__": "staticmethod"}
         try:
             callable_ptr = ctypes.c_void_p.from_address(addr + 16).value
-            if callable_ptr is not None:
+            if callable_ptr:
                 result["__func__"] = self.pull_data_from_address(callable_ptr, visited, depth + 1)
         except Exception as e:
             result["error"] = str(e)
         return result
 
     def _extract_classmethod(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract classmethod descriptor."""
-        result: dict[str, Any] = {"__type__": "classmethod"}
+        result = {"__type__": "classmethod"}
         try:
             callable_ptr = ctypes.c_void_p.from_address(addr + 16).value
-            if callable_ptr is not None:
+            if callable_ptr:
                 result["__func__"] = self.pull_data_from_address(callable_ptr, visited, depth + 1)
         except Exception as e:
             result["error"] = str(e)
         return result
 
-    def _extract_builtin_function(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+    def _extract_builtin_function(self, addr: int) -> Dict[str, Any]:
         """Extract builtin_function_or_method object."""
-        result: dict[str, Any] = {"__type__": "builtin_function_or_method"}
+        result = {"__type__": "builtin_function_or_method"}
         try:
             ml_ptr = ctypes.c_void_p.from_address(addr + 16).value
-            if ml_ptr is not None:
+            if ml_ptr:
                 name_ptr = ctypes.c_char_p.from_address(ml_ptr).value
                 if name_ptr:
                     result["__name__"] = name_ptr.decode("utf-8", errors="replace")
@@ -620,29 +631,29 @@ class Pointer:
         return result
 
     def _extract_generator(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract generator object metadata."""
-        result: dict[str, Any] = {"__type__": "generator"}
+        result = {"__type__": "generator"}
         result["status"] = "generator object (state not fully extracted)"
         return result
 
     def _extract_enumerate(
-        self, addr: int, visited: Optional[set[int]] = None, depth: int = 0
-    ) -> dict[str, Any]:
+        self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
+    ) -> Dict[str, Any]:
         """Extract enumerate object."""
-        result: dict[str, Any] = {"__type__": "enumerate"}
+        result: Dict[str, Any] = {"__type__": "enumerate"}
         try:
             index = ctypes.c_ssize_t.from_address(addr + 16).value
-            result["start_index"] = index
+            result["start_index"] = int(index)
         except Exception as e:
             result["start_index"] = f"<error: {e}>"
         return result
 
     def pull_data_from_address(
         self,
-        addr: Union[int, ctypes.c_void_p, None],
-        visited: Optional[set[int]] = None,
+        addr: Union[int, ctypes.c_void_p],
+        visited: Optional[VisitedSet] = None,
         depth: int = 0,
     ) -> Any:
         """Extract Python object data from memory address."""
@@ -662,21 +673,20 @@ class Pointer:
         try:
             _, type_name = self._get_type_info(actual_addr)
 
-            is_container = (
-                type_name in [
-                    "list", "tuple", "dict", "set", "frozenset", "range",
-                    "slice", "function", "module", "cell", "property",
-                    "staticmethod", "classmethod", "generator", "enumerate",
-                ]
-                or type_name in self._extractors
-                and "Exception" in type_name
-            )
-            if is_container:
+            is_container = type_name in [
+                "list", "tuple", "dict", "set", "frozenset", "range",
+                "slice", "function", "module", "cell", "property",
+                "staticmethod", "classmethod", "generator", "enumerate",
+            ]
+            is_exception = type_name in _EXCEPTION_NAMES
+            if is_container or is_exception:
                 visited.add(actual_addr)
 
-            extractor: Callable[..., Any] | None = self._extractors.get(type_name)
+            extractor = self._extractors.get(type_name)
             if extractor:
-                return extractor(actual_addr, visited, depth)
+                if is_container or is_exception:
+                    return extractor(actual_addr, visited, depth)
+                return extractor(actual_addr)
 
             return f"<{type_name} @ {hex(actual_addr)}>"
         except Exception as e:
@@ -685,6 +695,22 @@ class Pointer:
     def xray(self) -> Any:
         """Extract the logical Python value from the pinned object's memory."""
         return self.pull_data_from_address(self.address)
+
+    def mutate_float(self, target_slot_addr: int, new_val: float) -> None:
+        """Mutate a float at a given address."""
+        Scalpel.mutate_float(target_slot_addr, new_val)
+
+    def mutate_int(self, target_addr: int, new_val: int) -> None:
+        """Mutate a small int at a given address."""
+        Scalpel.mutate_int(target_addr, new_val)
+
+    def safe_list_swap(self, target_list: list[Any], index: int, new_obj: Any) -> None:
+        """Swap a list item by hot-swapping the memory pointer."""
+        Scalpel.safe_list_swap(target_list, index, new_obj)
+
+    def safe_dict_value_swap(self, target_dict: dict[Any, Any], key: object, new_addr: int) -> None:
+        """Swap a dict value pointer."""
+        Scalpel.safe_dict_value_swap(target_dict, key, new_addr)
 
     def __repr__(self) -> str:
         """Return a developer-friendly representation of the Pointer."""
@@ -701,7 +727,7 @@ class Pointer:
         self, keys_ptr: Any
     ) -> Tuple[int, int, bool, bool]:
         """Calculate dictionary memory layout parameters using DictKeysLens."""
-        keys: DictKeysLens = keys_ptr.contents
+        keys = keys_ptr.contents
         dk_kind = keys.dk_kind
         log2_ix_total = keys.dk_log2_index_bytes
         ix_total_size = 1 << log2_ix_total
@@ -720,14 +746,14 @@ class Pointer:
         entry_addr: int,
         stride: int,
         is_split: bool,
-        values_array: Any,
+        values_array: Optional[Any],
         index: int,
     ) -> Tuple[Optional[int], Optional[int]]:
         """Read key and value pointers from a dictionary entry."""
         key_offset = 0 if stride == 16 else 8
         key_ptr = ctypes.c_void_p.from_address(entry_addr + key_offset).value
 
-        if is_split and values_array is not None:
+        if is_split and values_array:
             val_ptr = values_array[index]
         else:
             val_offset = 8 if stride == 16 else 16
@@ -805,7 +831,6 @@ class Pointer:
     def _examine_tuple(self) -> None:
         """Examine tuple items using dynamically discovered offset."""
         size = ctypes.c_ssize_t.from_address(self.address + HEADER_SIZE).value
-        # ── CHANGE 5: Use discovered offset instead of hardcoded VAR_HEADER_SIZE + 8 ──
         items_array = ctypes.cast(
             self.address + TUPLE_ITEMS_OFFSET, ctypes.POINTER(ctypes.c_void_p)
         )
@@ -820,7 +845,6 @@ class Pointer:
         if not isinstance(self.lens, ListLens):
             return
 
-        # ── CHANGE 6: Use discovered offset instead of lens.ob_item ──
         items_ptr = ctypes.c_void_p.from_address(
             self.address + LIST_ITEMS_OFFSET
         ).value
@@ -836,16 +860,18 @@ class Pointer:
 
     def dump_raw(self, addr: int, length: int = 64, label: str = "MEMORY") -> None:
         """Display hex dump of memory with ASCII representation."""
-        print(f"\n  raw dump ({label}):")
+        print(f"\n--- DEBUG DUMP: {label} AT {hex(addr)} ---")
         try:
             raw_data = ctypes.string_at(addr, length)
             for i in range(0, length, 16):
+                offset = f"+{i:03x}"
                 chunk = raw_data[i : i + 16]
                 hex_vals = " ".join(f"{b:02x}" for b in chunk).ljust(47)
                 ascii_vals = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
-                print(f"    +{i:02x}  {hex_vals} {ascii_vals}")
+                print(f"{offset} | {hex_vals} | {ascii_vals}")
         except Exception as e:
-            print(f"    FAILED TO READ: {e}")
+            print(f"FAILED TO READ: {e}")
+        print("-" * 60)
 
     def _print_logical_data(self) -> None:
         """Display logical field data from lens."""
@@ -856,52 +882,18 @@ class Pointer:
         for field_info in getattr(self.lens, "_fields_", []):
             field_name = field_info[0]
             val = getattr(self.lens, field_name)
-            # Skip ctypes objects that aren't useful to display
             if hasattr(val, "_type_"):
                 continue
             is_ptr = isinstance(val, int) and field_name.endswith("_ptr")
             display_val = hex(val) if is_ptr else val
             print(f"    {field_name} = {display_val}")
 
-    def mutate_float(self, new_value: float) -> None:
-        """Mutate the float value in-place."""
-        target = self._target
-        if target is None:
-            raise ValueError("Pointer was created from an address, not a target object")
-        Scalpel.mutate_float(target, new_value)
-
-    def mutate_int(self, new_value: int) -> None:
-        """Mutate the int value in-place."""
-        target = self._target
-        if target is None:
-            raise ValueError("Pointer was created from an address, not a target object")
-        Scalpel.mutate_int(target, new_value)
-
-    def safe_list_swap(self, index: int, new_obj: Any) -> None:
-        """Safely swap a list item at the given index."""
-        target = self._target
-        if target is None:
-            raise ValueError("Pointer was created from an address, not a target object")
-        list_swap = cast(Callable[[list[Any], int, Any], None], getattr(Scalpel, "safe_list_swap"))
-        list_swap(target, index, new_obj)
-
-    def safe_dict_value_swap(self, key: Any, new_value: Any) -> None:
-        """Safely swap a dict value for the given key."""
-        target = self._target
-        if target is None:
-            raise ValueError("Pointer was created from an address, not a target object")
-        dict_swap = cast(Callable[[dict[Any, Any], Any, Any], None], getattr(Scalpel, "safe_dict_value_swap"))
-        dict_swap(target, key, new_value)
-
-
     def _print_raw_memory(self, raw_bytes: bytes, total_size: int) -> None:
         """Display raw memory dump in hex format."""
         print("  hex:")
         for i in range(0, total_size, 16):
             chunk = raw_bytes[i : i + 16]
-            hex_vals = " ".join(f"{b:02x}" for b in chunk).ljust(47)
-            ascii_vals = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
-            print(f"    +{i:02x}  {hex_vals} {ascii_vals}")
+            print(f"    {i:04x} {chunk.hex(' ')}")
 
     def examine(self) -> None:
         """Comprehensive examination of Python object memory structure."""

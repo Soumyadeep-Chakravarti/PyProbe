@@ -3,7 +3,7 @@ import os
 sys.path.insert(0, os.path.abspath("src"))
 from pyprobe.core.pointer.engine import Pointer
 
-def run_test(name, obj):
+def run_test(name: str, obj: object) -> None:
     try:
         print(f"--- TEST: {name} ---")
         p = Pointer(obj)

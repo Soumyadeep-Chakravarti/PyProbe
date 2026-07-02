@@ -1,21 +1,12 @@
 import ctypes
 
-
 # Look at dict memory structure directly
-d = {"a": 1}
+d: dict[str, int] = {"a": 1}
 d_addr = id(d)
-ma_keys_ptr = ctypes.c_void_p.from_address(d_addr + 48).value # 16 + 8 + 8 + 8 + 8?
-# Let's verify ma_keys address
-# CPython 3.12 dict:
-# refcnt (8)
-# type_ptr (8)
-# ma_used (8)
-# ma_version_tag (8)
-# ma_keys (8)
-# ma_values (8)
-
 # So ma_keys is at +32.
-keys_addr = ctypes.c_void_p.from_address(d_addr + 32).value
+keys_addr: int | None = ctypes.c_void_p.from_address(d_addr + 32).value
+if keys_addr is None:
+	raise RuntimeError("Could not locate dict keys address.")
 
 print(f"Dict Address: {hex(d_addr)}")
 print(f"Keys Address: {hex(keys_addr)}")

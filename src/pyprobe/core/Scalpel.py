@@ -5,19 +5,21 @@ Phase 2: Controlled memory mutation with strict safety guarantees.
 Dynamically maps memory layouts to survive CPython version changes.
 Includes CPython 3.12+ PyLongObject bitfield fixes.
 """
+import os 
+import sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
 
 import ctypes
 import types
 import gc
-import sys
-from contextlib import contextmanager
-from typing import Any, Tuple, cast
 
-from pyprobe.core.offset_discovery import (
-    LIST_ITEMS_OFFSET,
-    DICT_LAYOUT,
-    STR_DATA_OFFSET
-)
+from contextlib import contextmanager
+from typing import Tuple, Any
+
 
 # Globally cache the memory addresses of Python's small integers at load time
 SMALL_INT_ADDRS = {id(i) for i in range(-5, 257)}
@@ -175,13 +177,16 @@ def mutate_int(target_int: int, new_value: int) -> None:
             f"but {new_value} requires {required_capacity}."
         )
 
-    # Encode new size/tag
+    # Encode new size/tag (CPython 3.12+ lv_tag)
+    # lv_tag = (digit_count << 3) | sign_tag | interned_bit
+    #   sign_tag:  positive=0, zero=1, negative=2
+    #   interned_bit: bit 2 (value 4), set for cached small ints
     if sys.version_info >= (3, 12):
         if new_value == 0:
-            new_ob_size = 0
+            new_ob_size = 5  # (0 << 3) | 1  — zero is always cached
         else:
-            sign_bit    = 1 if new_value > 0 else 2
-            new_ob_size = (required_capacity << 3) | sign_bit
+            sign_tag = 0 if new_value > 0 else 2
+            new_ob_size = (required_capacity << 3) | sign_tag
     else:
         if new_value == 0:
             new_ob_size = 0
@@ -213,6 +218,7 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
         list_addr + LIST_ITEMS_OFFSET → ob_item pointer
         ob_item + (index * 8)         → slot to swap
     """
+    from pyprobe.core.offset_discovery import LIST_ITEMS_OFFSET
     assert_safe(target_list, stack_depth=5)
     if index < 0 or index >= len(target_list):
         raise IndexError("List index out of range")
@@ -220,10 +226,9 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
     list_addr    = id(target_list)
     new_obj_addr = id(new_obj)
 
-    ob_item_ptr = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
-    if ob_item_ptr is None:
-        raise RuntimeError("Could not locate list item pointer in memory.")
-    target_slot_addr: int = ob_item_ptr + (index * 8)
+    ob_item_ptr      = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
+    assert ob_item_ptr is not None
+    target_slot_addr = ob_item_ptr + (index * 8)
 
     with gc_suspended():
         old_obj_ptr = ctypes.c_void_p.from_address(target_slot_addr).value
@@ -248,45 +253,44 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
         dict_addr + ma_keys_offset → ma_keys pointer
         scan ma_keys for old_val_id → target slot
     """
+    from pyprobe.core.offset_discovery import DICT_LAYOUT 
     assert_safe(target_dict, stack_depth=5)
     if key not in target_dict:
         raise KeyError(f"Key '{key}' not found.")
-
-    dict_layout = DICT_LAYOUT
-    if dict_layout is None:
-        raise RuntimeError("Dictionary layout offsets are unavailable.")
 
     d_addr       = id(target_dict)
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
+    assert DICT_LAYOUT is not None
     ma_keys_ptr = ctypes.c_void_p.from_address(
-        d_addr + cast(int, dict_layout["ma_keys_offset"])
+        d_addr + DICT_LAYOUT["ma_keys_offset"]
     ).value
-    if ma_keys_ptr is None:
-        raise RuntimeError("Could not locate dict keys pointer in memory.")
+    assert ma_keys_ptr is not None
 
-    # Scan for old value pointer
-    scan_limit = len(target_dict) * cast(int, dict_layout["entry_size"]) * 4
-    target_slot_addr: int | None = None
+    entry_size  = DICT_LAYOUT["entry_size"]
+    scan_limit  = len(target_dict) * entry_size * 4
+    target_slot_addr = None
 
     for offset in range(0, scan_limit, 8):
         try:
             ptr = ctypes.c_void_p.from_address(ma_keys_ptr + offset).value
             if ptr == old_val_id:
-                target_slot_addr = ma_keys_ptr + offset
+                candidate = ma_keys_ptr + offset
+                # Validation: reject kernel addresses, null, and unaligned pointers
+                if candidate < 0x1000 or candidate & 7:
+                    continue
+                target_slot_addr = candidate
                 break
         except Exception:
             pass
 
-    if target_slot_addr is None:
+    if not target_slot_addr:
         raise RuntimeError("Could not locate value pointer in memory.")
-
-    slot_addr = target_slot_addr
 
     with gc_suspended():
         ctypes.c_ssize_t.from_address(new_obj_addr).value += 1               # INCREF new
-        ctypes.c_void_p.from_address(slot_addr).value = new_obj_addr  # SWAP
+        ctypes.c_void_p.from_address(target_slot_addr).value = new_obj_addr  # SWAP
         ctypes.c_ssize_t.from_address(old_val_id).value -= 1                 # DECREF old
 
 
@@ -320,7 +324,7 @@ def mutate_bytes(target_bytes: bytes, new_bytes: bytes) -> None:
         # Overwrite the raw memory block using ctypes.memmove
         target_buffer = addr + BYTES_VAL_OFFSET
         source_buffer = id(new_bytes) + BYTES_VAL_OFFSET
-        ctypes.memmove(target_buffer, source_buffer, len(target_bytes))
+        _ = ctypes.memmove(target_buffer, source_buffer, len(target_bytes))
         
         # Invalidate the cached hash by setting it to -1 (so dicts don't break)
         ctypes.c_ssize_t.from_address(addr + 24).value = -1
@@ -332,6 +336,8 @@ def mutate_str(target_str: str, new_str: str) -> None:
     non-interned Compact ASCII string in memory.
     Uses Phase 1 dynamic offset discovery.
     """
+
+    from pyprobe.core.offset_discovery import STR_DATA_OFFSET
     assert_safe(target_str, stack_depth=5)
     if len(target_str) != len(new_str):
         raise ValueError("Length mismatch: cannot resize allocated string object.")
@@ -339,6 +345,11 @@ def mutate_str(target_str: str, new_str: str) -> None:
         return
 
     addr = id(target_str)
+
+    if STR_DATA_OFFSET is None:
+        raise RuntimeError("String data offset was not discovered.")
+
+    data_offset: int = STR_DATA_OFFSET
 
     # State validation (ensure it is Compact ASCII and not interned)
     state_flags = ctypes.c_uint32.from_address(addr + 32).value
@@ -348,9 +359,9 @@ def mutate_str(target_str: str, new_str: str) -> None:
         raise TypeError("Unsupported encoding. Scalpel only mutates Compact ASCII.")
 
     with gc_suspended():
-        target_buffer = addr + STR_DATA_OFFSET
-        source_buffer = id(new_str) + STR_DATA_OFFSET
-        ctypes.memmove(target_buffer, source_buffer, len(target_str))
+        target_buffer: int = addr + data_offset
+        source_buffer: int = id(new_str) + data_offset
+        _ = ctypes.memmove(target_buffer, source_buffer, len(target_str))
         
         # Reset the cached hash
         ctypes.c_ssize_t.from_address(addr + 24).value = -1

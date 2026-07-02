@@ -1,6 +1,6 @@
 # PyProbe
 
-**PyProbe** is a research-grade toolkit for CPython memory introspection and controlled manipulation. It provides direct access to Python's internal memory structures, enabling both observation (X-Ray) and eventually safe modification (Scalpel) of runtime objects.
+**PyProbe** is a research-grade toolkit for Python memory introspection and controlled manipulation. It provides direct access to Python's internal memory structures, enabling both observation (X-Ray) and eventually safe modification (Scalpel) of runtime objects.
 
 > **Research Project** - Targeting publication in arXiv, JOSS, SoftwareX, and ACM SIGPLAN venues.
 
