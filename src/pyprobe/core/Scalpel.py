@@ -13,12 +13,12 @@ src_dir = os.path.abspath(os.path.join(current_dir, '..', '..'))
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-import ctypes
-import types
-import gc
+import ctypes # noqa: E402
+import types # noqa: E402
+import gc # noqa: E402
 
-from contextlib import contextmanager
-from typing import Tuple, Any
+from contextlib import contextmanager # noqa: E402
+from typing import Tuple, Any # noqa: E402
 
 
 # Globally cache the memory addresses of Python's small integers at load time

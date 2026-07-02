@@ -1,0 +1,20 @@
+[2026-06-24 22:55:29] [DEBUG] CLASS: Exception | ADDR: 0x3 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-06-24 22:55:29] [DEBUG] CLASS: Exception | ADDR: 0x2 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-06-24 22:55:29] [DEBUG] CLASS: Exception | ADDR: 0xa2fb000 | TYPE: RawPointer | MSG: Windows IsBadReadPtr flagged address as protected.
+[2026-06-24 22:55:36] [DEBUG] CLASS: Exception | ADDR: 0x3 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-06-24 22:55:36] [DEBUG] CLASS: Exception | ADDR: 0x2 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-06-24 22:55:36] [DEBUG] CLASS: Exception | ADDR: 0xb921000 | TYPE: RawPointer | MSG: Windows IsBadReadPtr flagged address as protected.
+[2026-06-24 23:34:02] [DEBUG] CLASS: Exception | ADDR: 0x3 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-06-24 23:34:02] [DEBUG] CLASS: Exception | ADDR: 0x2 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-06-24 23:34:02] [DEBUG] CLASS: Exception | ADDR: 0xaf81000 | TYPE: RawPointer | MSG: Windows IsBadReadPtr flagged address as protected.
+[2026-06-24 23:34:09] [INFO] [INFO] PROCESS | Type: list | Addr: 0x19fed1a2c40 | Steps: [1/3: BACKUP_OK] -> [2/3: WRITE_OK] -> [3/3: VERIFY_OK] | Status: MUTATION_COMPLETE
+[2026-06-24 23:34:09] [ERROR] CLASS: ZeroDivisionError | ADDR: 0xdeadbeef | TYPE: RawPointer | MSG: division by zero
+[2026-07-02 19:50:47] [DEBUG] CLASS: Exception | ADDR: 0x3 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-07-02 19:50:47] [DEBUG] CLASS: Exception | ADDR: 0x2 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-07-02 19:50:47] [DEBUG] CLASS: Exception | ADDR: 0xb587000 | TYPE: RawPointer | MSG: Windows IsBadReadPtr flagged address as protected.
+[2026-07-02 19:54:53] [DEBUG] CLASS: Exception | ADDR: 0x3 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-07-02 19:54:53] [DEBUG] CLASS: Exception | ADDR: 0x2 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-07-02 19:54:53] [DEBUG] CLASS: Exception | ADDR: 0xb47f000 | TYPE: RawPointer | MSG: Windows IsBadReadPtr flagged address as protected.
+[2026-07-02 19:58:23] [DEBUG] CLASS: Exception | ADDR: 0x3 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-07-02 19:58:23] [DEBUG] CLASS: Exception | ADDR: 0x2 | TYPE: RawPointer | MSG: Address below 64KB threshold or invalid type.
+[2026-07-02 19:58:23] [DEBUG] CLASS: Exception | ADDR: 0xf933000 | TYPE: RawPointer | MSG: Windows IsBadReadPtr flagged address as protected.

@@ -10,7 +10,7 @@ if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 # ----------------------------------------
 
-from pyprobe.utils.Log_engine import PyProbeDiagnostics
+from pyprobe.utils.Log_engine import PyProbeDiagnostics # noqa: E402
 
 # Hook into the singleton engine
 diag = PyProbeDiagnostics()

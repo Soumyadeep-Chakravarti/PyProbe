@@ -21,12 +21,6 @@ from pyprobe.raw.lenses.set_lens import SetLens
 from pyprobe.raw.lenses.str_lens import CompactUnicodeLens, StringLens
 from pyprobe.raw.lenses.tuple_lens import TupleLens
 
-# ── NEW: Dynamic offset discovery (no hardcoding, no version checks) ──
-from pyprobe.core.offset_discovery import (
-    TUPLE_ITEMS_OFFSET,
-    LIST_ITEMS_OFFSET,
-    DICT_MA_KEYS_OFFSET,
-)
 
 # Type aliases
 VisitedSet = set[int]
@@ -54,6 +48,7 @@ def _get_dummy_ptr() -> Optional[int]:
         could not be located (with a warning).
     """
     global _dummy_ptr_cache
+    from pyprobe.core.offset_discovery import DICT_MA_KEYS_OFFSET
     if _dummy_ptr_cache is None:
         try:
             d = {0: 0}
@@ -343,6 +338,8 @@ class Pointer:
         self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> tuple[Any, ...]:
         """Extract tuple items using dynamically discovered offset."""
+        from pyprobe.core.offset_discovery import TUPLE_ITEMS_OFFSET
+
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         # ── CHANGE 2: Use discovered offset instead of hardcoded VAR_HEADER_SIZE + 8 ──
         items_array = ctypes.cast(
@@ -357,6 +354,8 @@ class Pointer:
         self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> list[Any]:
         """Extract list items using dynamically discovered offset."""
+        from pyprobe.core.offset_discovery import LIST_ITEMS_OFFSET
+
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         # ── CHANGE 3: Use discovered offset instead of hardcoded HEADER_SIZE + 8 ──
         items_ptr = ctypes.c_void_p.from_address(addr + LIST_ITEMS_OFFSET).value
