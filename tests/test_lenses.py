@@ -17,7 +17,7 @@ def run_test(name: str, obj: object) -> None:
         import traceback
         traceback.print_exc()
 
-def test_lens_restoration():
+def test_lens_restoration() -> None:
     # Test a few types to ensure lenses are picking up data correctly
     run_test("Int", 123456789)
     run_test("Float", 3.14159)

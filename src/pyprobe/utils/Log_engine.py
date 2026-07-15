@@ -1,9 +1,10 @@
+import collections
 import logging
 import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -24,7 +25,7 @@ class PyProbeDiagnostics:
     """
     _instance: Optional['PyProbeDiagnostics'] = None
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, log_file: str = "pyprobe_faults.log", max_buffer_size: int = 1000, write_to_disk: bool = True) -> 'PyProbeDiagnostics':
         if not cls._instance:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -40,8 +41,7 @@ class PyProbeDiagnostics:
         self.write_to_disk = write_to_disk
         
         # Volatile runtime ring buffer (Always ON for testing)
-        self.buffer: List[FaultSnapshot] = []
-        
+        self.buffer: collections.deque[FaultSnapshot] = collections.deque(maxlen=self.max_buffer_size)
         # Initialize internal standard logger
         self.logger = logging.getLogger("PyProbe.Internal")
         self.logger.setLevel(logging.DEBUG)
@@ -91,10 +91,6 @@ class PyProbeDiagnostics:
             message=str(error)
         )
         self.buffer.append(snapshot)
-        
-        # Keep buffer bounded
-        if len(self.buffer) > self.max_buffer_size:
-            self.buffer.pop(0)
             
         # 2. Write to physical log file
         log_payload = f"CLASS: {err_class} | ADDR: {hex(address)} | TYPE: {obj_type} | MSG: {str(error)}"
@@ -128,7 +124,7 @@ class PyProbeDiagnostics:
 
     # ── System Query API ────────────────────────────────────────────────────
     
-    def get_failures_by_type(self, error_class_name: str) -> List[FaultSnapshot]:
+    def get_failures_by_type(self, error_class_name: str) -> list[FaultSnapshot]:
         """Query system state programmatically for matching error footprints."""
         return [snap for snap in self.buffer if snap.error_class == error_class_name]
 

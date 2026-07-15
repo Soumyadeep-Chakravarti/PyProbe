@@ -7,7 +7,7 @@ import builtins
 import ctypes
 import sys
 import warnings
-from typing import Any, Dict, Optional, Tuple, Type, Union, cast
+from typing import Any, Dict, Optional, Set, Tuple, Type, Union, cast
 
 from pyprobe.raw.headers.py_object import PyObjectHeader
 from pyprobe.raw.headers.py_type import PyTypeObject
@@ -21,14 +21,14 @@ from pyprobe.raw.lenses.set_lens import SetLens
 from pyprobe.raw.lenses.str_lens import CompactUnicodeLens, StringLens
 from pyprobe.raw.lenses.tuple_lens import TupleLens
 
+from pyprobe.core.offset_discovery import (
+    TUPLE_ITEMS_OFFSET,
+    LIST_ITEMS_OFFSET,
+    DICT_MA_KEYS_OFFSET,
+)
 
 # Type aliases
-VisitedSet = set[int]
-ExtractorFunc = Any  # Callable to extractor method
-
-# Type aliases
-VisitedSet = set[int]
-ExtractorFunc = Any  # Callable to extractor method
+VisitedSet = Set[int]
 
 # PyObject_HEAD
 HEADER_SIZE = 16
@@ -341,7 +341,6 @@ class Pointer:
         self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> tuple[Any, ...]:
         """Extract tuple items using dynamically discovered offset."""
-        from pyprobe.core.offset_discovery import TUPLE_ITEMS_OFFSET
 
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         # ── CHANGE 2: Use discovered offset instead of hardcoded VAR_HEADER_SIZE + 8 ──
@@ -357,7 +356,6 @@ class Pointer:
         self, addr: int, visited: Optional[VisitedSet] = None, depth: int = 0
     ) -> list[Any]:
         """Extract list items using dynamically discovered offset."""
-        from pyprobe.core.offset_discovery import LIST_ITEMS_OFFSET
 
         size = ctypes.c_ssize_t.from_address(addr + HEADER_SIZE).value
         # ── CHANGE 3: Use discovered offset instead of hardcoded HEADER_SIZE + 8 ──

@@ -91,7 +91,7 @@ def safe_eval(expr: str, context: dict[str, object]) -> object:
     return eval(compile(tree, "<repl>", "eval"), safe_globals, context)
 
 
-def help_msg():
+def help_msg() -> None:
     print("""
     PyProbe: Live Memory REPL
     commands:
@@ -102,7 +102,7 @@ def help_msg():
     """)
 
 
-def repl():
+def repl() -> None:
     print("=" * 60)
     print("Welcome to PyProbe Live Memory Explorer".center(60))
     print("=" * 60)

@@ -8,7 +8,7 @@ from pyprobe import pin
 if TYPE_CHECKING:
     from pyprobe.core.pointer.engine import Pointer
 
-def complex_graph_tour():
+def complex_graph_tour() -> None:
     """Showcase PyProbe on a complex, messy object graph."""
     
     # Node in a doubly linked list
@@ -33,7 +33,7 @@ def complex_graph_tour():
     collection: Set[Any] = {n1, n2, "stable_string", (1, 2)}
     
     print("\n[ X-RAY OF DOUBLY LINKED LIST NODE ]")
-    p: "Pointer" = pin(n1)  # type: ignore[attr-defined]
+    p: "Pointer" = pin(n1)
     p.examine()
     
     print("\n[ PULLING DATA FOR THE WHOLE GRAPH ]")

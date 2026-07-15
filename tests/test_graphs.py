@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath("src"))
 from pyprobe import pin
 
 class TestGraphs(unittest.TestCase):
-    def test_cycles(self):
+    def test_cycles(self) -> None:
         # 1. Cyclic List
         a: list[object] = [1, 2]
         a.append(a)
@@ -30,7 +30,7 @@ class TestGraphs(unittest.TestCase):
         val3 = p3.pull_data_from_address(p3.address)
         self.assertEqual(val3[1]["link"], f"<Cycle @ {hex(p3.address)}>")
 
-    def test_depth_limit(self):
+    def test_depth_limit(self) -> None:
         # Test cutoff with a small limit for verification
         # Deep structure exceeding industrial depth limit (100)
         curr: dict[str, object] = {}
@@ -62,4 +62,4 @@ class TestGraphs(unittest.TestCase):
         self.assertTrue(found_cutoff, "Should have encountered a depth limit cutoff")
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

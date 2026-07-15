@@ -12,17 +12,17 @@ from pyprobe import pin
 class TestBoolAndNone(unittest.TestCase):
     """Tests for bool and NoneType extraction."""
 
-    def test_bool_true(self):
+    def test_bool_true(self) -> None:
         p = pin(True)
         val = p.xray()
         self.assertIs(val, True)
 
-    def test_bool_false(self):
+    def test_bool_false(self) -> None:
         p = pin(False)
         val = p.xray()
         self.assertIs(val, False)
 
-    def test_none(self):
+    def test_none(self) -> None:
         p = pin(None)
         val = p.xray()
         self.assertIsNone(val)
@@ -31,31 +31,31 @@ class TestBoolAndNone(unittest.TestCase):
 class TestNumericTypes(unittest.TestCase):
     """Tests for complex number extraction."""
 
-    def test_complex_positive(self):
+    def test_complex_positive(self) -> None:
         c = 3.0 + 4.0j
         p = pin(c)
         val = p.xray()
         self.assertEqual(val, c)
 
-    def test_complex_negative(self):
+    def test_complex_negative(self) -> None:
         c = -1.5 - 2.5j
         p = pin(c)
         val = p.xray()
         self.assertEqual(val, c)
 
-    def test_complex_zero(self):
+    def test_complex_zero(self) -> None:
         c = 0j
         p = pin(c)
         val = p.xray()
         self.assertEqual(val, c)
 
-    def test_complex_real_only(self):
+    def test_complex_real_only(self) -> None:
         c = complex(5.0, 0.0)
         p = pin(c)
         val = p.xray()
         self.assertEqual(val, c)
 
-    def test_complex_imag_only(self):
+    def test_complex_imag_only(self) -> None:
         c = complex(0.0, 7.0)
         p = pin(c)
         val = p.xray()
@@ -65,25 +65,25 @@ class TestNumericTypes(unittest.TestCase):
 class TestSequenceTypes(unittest.TestCase):
     """Tests for range, slice, bytearray, and memoryview extraction."""
 
-    def test_range_simple(self):
+    def test_range_simple(self) -> None:
         r = range(10)
         p = pin(r)
         val = p.xray()
         self.assertEqual(val, r)
 
-    def test_range_with_step(self):
+    def test_range_with_step(self) -> None:
         r = range(1, 20, 3)
         p = pin(r)
         val = p.xray()
         self.assertEqual(val, r)
 
-    def test_range_negative(self):
+    def test_range_negative(self) -> None:
         r = range(10, 0, -1)
         p = pin(r)
         val = p.xray()
         self.assertEqual(val, r)
 
-    def test_slice_simple(self):
+    def test_slice_simple(self) -> None:
         s = slice(1, 10)
         p = pin(s)
         val = p.xray()
@@ -91,7 +91,7 @@ class TestSequenceTypes(unittest.TestCase):
         self.assertEqual(val.stop, s.stop)
         self.assertEqual(val.step, s.step)
 
-    def test_slice_with_step(self):
+    def test_slice_with_step(self) -> None:
         s = slice(0, 100, 5)
         p = pin(s)
         val = p.xray()
@@ -99,7 +99,7 @@ class TestSequenceTypes(unittest.TestCase):
         self.assertEqual(val.stop, s.stop)
         self.assertEqual(val.step, s.step)
 
-    def test_slice_with_none(self):
+    def test_slice_with_none(self) -> None:
         s = slice(None, 10, None)
         p = pin(s)
         val = p.xray()
@@ -107,25 +107,25 @@ class TestSequenceTypes(unittest.TestCase):
         self.assertEqual(val.stop, s.stop)
         self.assertEqual(val.step, s.step)
 
-    def test_bytearray_simple(self):
+    def test_bytearray_simple(self) -> None:
         ba = bytearray(b"hello world")
         p = pin(ba)
         val = p.xray()
         self.assertEqual(val, ba)
 
-    def test_bytearray_empty(self):
+    def test_bytearray_empty(self) -> None:
         ba = bytearray()
         p = pin(ba)
         val = p.xray()
         self.assertEqual(val, ba)
 
-    def test_bytearray_binary(self):
+    def test_bytearray_binary(self) -> None:
         ba = bytearray(b"\x00\x01\x02\xff\xfe")
         p = pin(ba)
         val = p.xray()
         self.assertEqual(val, ba)
 
-    def test_memoryview(self):
+    def test_memoryview(self) -> None:
         """memoryview xray returns bytes, not the memoryview itself."""
         data = b"hello"
         mv = memoryview(data)
@@ -137,7 +137,7 @@ class TestSequenceTypes(unittest.TestCase):
 class TestFunctionExtraction(unittest.TestCase):
     """Tests for function object extraction."""
 
-    def test_function_simple(self):
+    def test_function_simple(self) -> None:
         def my_func():
             pass
 
@@ -146,7 +146,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__type__"], "function")
         self.assertEqual(val["__name__"], "my_func")
 
-    def test_function_with_defaults(self):
+    def test_function_with_defaults(self) -> None:
         def func_with_defaults(x: int, y: int = 10, z: str = "hello") -> int:
             return x + y
 
@@ -155,7 +155,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__name__"], "func_with_defaults")
         self.assertEqual(val["__defaults__"], (10, "hello"))
 
-    def test_function_with_doc(self):
+    def test_function_with_doc(self) -> None:
         def documented_func():
             """This is the docstring."""
             pass
@@ -164,35 +164,35 @@ class TestFunctionExtraction(unittest.TestCase):
         val = p.xray()
         self.assertEqual(val["__doc__"], "This is the docstring.")
 
-    def test_lambda(self):
+    def test_lambda(self) -> None:
         f: Callable[[int], int] = lambda x: x * 2
         p = pin(f)
         val = p.xray()
         self.assertEqual(val["__type__"], "function")
-        self.assertEqual(val["__name__"], "f")
+        self.assertEqual(val["__name__"], "<lambda>")
 
 class TestTypeExtraction(unittest.TestCase):
     """Tests for type object extraction."""
 
-    def test_builtin_type_int(self):
+    def test_builtin_type_int(self) -> None:
         p = pin(int)
         val = p.xray()
         self.assertEqual(val["__type__"], "type")
         self.assertEqual(val["__name__"], "int")
 
-    def test_builtin_type_str(self):
+    def test_builtin_type_str(self) -> None:
         p = pin(str)
         val = p.xray()
         self.assertEqual(val["__type__"], "type")
         self.assertEqual(val["__name__"], "str")
 
-    def test_builtin_type_list(self):
+    def test_builtin_type_list(self) -> None:
         p = pin(list)
         val = p.xray()
         self.assertEqual(val["__type__"], "type")
         self.assertEqual(val["__name__"], "list")
 
-    def test_custom_class(self):
+    def test_custom_class(self) -> None:
         class MyCustomClass:
             pass
 
@@ -201,7 +201,7 @@ class TestTypeExtraction(unittest.TestCase):
         self.assertEqual(val["__type__"], "type")
         self.assertEqual(val["__name__"], "MyCustomClass")
 
-    def test_type_of_type(self):
+    def test_type_of_type(self) -> None:
         p = pin(type)
         val = p.xray()
         self.assertEqual(val["__type__"], "type")
@@ -211,20 +211,20 @@ class TestTypeExtraction(unittest.TestCase):
 class TestModuleExtraction(unittest.TestCase):
     """Tests for module object extraction."""
 
-    def test_sys_module(self):
+    def test_sys_module(self) -> None:
         p = pin(sys)
         val = p.xray()
         self.assertEqual(val["__type__"], "module")
         self.assertEqual(val["__name__"], "sys")
         self.assertIn("__dict_keys__", val)
 
-    def test_os_module(self):
+    def test_os_module(self) -> None:
         p = pin(os)
         val = p.xray()
         self.assertEqual(val["__type__"], "module")
         self.assertEqual(val["__name__"], "os")
 
-    def test_module_has_dict_keys(self):
+    def test_module_has_dict_keys(self) -> None:
         p = pin(sys)
         val = p.xray()
         self.assertIsInstance(val["__dict_keys__"], list)
@@ -235,7 +235,7 @@ class TestModuleExtraction(unittest.TestCase):
 class TestCodeExtraction(unittest.TestCase):
     """Tests for code object extraction."""
 
-    def test_function_code_object(self):
+    def test_function_code_object(self) -> None:
         def sample_func(x: int, y: int) -> int:
             return x + y
 
@@ -245,7 +245,7 @@ class TestCodeExtraction(unittest.TestCase):
         self.assertEqual(val["__type__"], "code")
         self.assertEqual(val["co_name"], "sample_func")
 
-    def test_code_with_constants(self):
+    def test_code_with_constants(self) -> None:
         def func_with_consts():
             _x = 42
             return "hello"
@@ -259,7 +259,7 @@ class TestCodeExtraction(unittest.TestCase):
         self.assertIn(42, val["co_consts"])
         self.assertIn("hello", val["co_consts"])
 
-    def test_lambda_code_object(self):
+    def test_lambda_code_object(self) -> None:
         f: Callable[[int], int] = lambda x: x * 2
         code = f.__code__
         p = pin(code)
@@ -271,7 +271,7 @@ class TestCodeExtraction(unittest.TestCase):
 class TestCellExtraction(unittest.TestCase):
     """Tests for cell object (closure) extraction."""
 
-    def test_closure_cell(self):
+    def test_closure_cell(self) -> None:
         def outer(x: int) -> Callable[[], int]:
             def inner() -> int:
                 return x
@@ -288,7 +288,7 @@ class TestCellExtraction(unittest.TestCase):
         self.assertEqual(val["__type__"], "cell")
         self.assertEqual(val["cell_contents"], 42)
 
-    def test_closure_cell_string(self):
+    def test_closure_cell_string(self) -> None:
         def outer(msg: str) -> Callable[[], str]:
             def inner() -> str:
                 return msg
@@ -304,7 +304,7 @@ class TestCellExtraction(unittest.TestCase):
         self.assertEqual(val["__type__"], "cell")
         self.assertEqual(val["cell_contents"], "hello world")
 
-    def test_closure_multiple_cells(self):
+    def test_closure_multiple_cells(self) -> None:
         def outer(a: int, b: int) -> Callable[[], int]:
             def inner() -> int:
                 return a + b
@@ -334,7 +334,7 @@ class TestCellExtraction(unittest.TestCase):
 class TestExceptionExtraction(unittest.TestCase):
     """Tests for exception object extraction."""
 
-    def test_value_error(self):
+    def test_value_error(self) -> None:
         exc = ValueError("invalid value")
         p = pin(exc)
         val = p.xray()
@@ -342,7 +342,7 @@ class TestExceptionExtraction(unittest.TestCase):
         self.assertEqual(val["exception_type"], "ValueError")
         self.assertEqual(val["args"], ("invalid value",))
 
-    def test_type_error(self):
+    def test_type_error(self) -> None:
         exc = TypeError("wrong type")
         p = pin(exc)
         val = p.xray()
@@ -350,7 +350,7 @@ class TestExceptionExtraction(unittest.TestCase):
         self.assertEqual(val["exception_type"], "TypeError")
         self.assertEqual(val["args"], ("wrong type",))
 
-    def test_key_error(self):
+    def test_key_error(self) -> None:
         exc = KeyError("missing_key")
         p = pin(exc)
         val = p.xray()
@@ -358,7 +358,7 @@ class TestExceptionExtraction(unittest.TestCase):
         self.assertEqual(val["exception_type"], "KeyError")
         self.assertEqual(val["args"], ("missing_key",))
 
-    def test_exception_multiple_args(self):
+    def test_exception_multiple_args(self) -> None:
         # Note: OSError(2, ...) creates FileNotFoundError in Python
         exc = FileNotFoundError(2, "No such file", "test.txt")
         p = pin(exc)
@@ -368,14 +368,14 @@ class TestExceptionExtraction(unittest.TestCase):
         self.assertIn(2, val["args"])
         self.assertIn("No such file", val["args"])
 
-    def test_runtime_error(self):
+    def test_runtime_error(self) -> None:
         exc = RuntimeError("something went wrong")
         p = pin(exc)
         val = p.xray()
         self.assertEqual(val["__type__"], "exception")
         self.assertEqual(val["exception_type"], "RuntimeError")
 
-    def test_stop_iteration(self):
+    def test_stop_iteration(self) -> None:
         exc = StopIteration("done")
         p = pin(exc)
         val = p.xray()
@@ -386,7 +386,7 @@ class TestExceptionExtraction(unittest.TestCase):
 class TestDescriptorExtraction(unittest.TestCase):
     """Tests for property, staticmethod, and classmethod extraction."""
 
-    def test_property_fget_only(self):
+    def test_property_fget_only(self) -> None:
         class MyClass:
             @property
             def value(self):
@@ -399,7 +399,7 @@ class TestDescriptorExtraction(unittest.TestCase):
         self.assertIn("fget", val)
         self.assertEqual(val["fget"]["__type__"], "function")
 
-    def test_property_fget_fset(self):
+    def test_property_fget_fset(self) -> None:
         class MyClass:
             def __init__(self):
                 self._val: int = 0
@@ -419,7 +419,7 @@ class TestDescriptorExtraction(unittest.TestCase):
         self.assertIn("fget", val)
         self.assertIn("fset", val)
 
-    def test_staticmethod(self):
+    def test_staticmethod(self) -> None:
         class MyClass:
             @staticmethod
             def my_static():
@@ -432,7 +432,7 @@ class TestDescriptorExtraction(unittest.TestCase):
         self.assertIn("__func__", val)
         self.assertEqual(val["__func__"]["__name__"], "my_static")
 
-    def test_classmethod(self):
+    def test_classmethod(self) -> None:
         class MyClass:
             @classmethod
             def my_class(cls):
@@ -449,25 +449,25 @@ class TestDescriptorExtraction(unittest.TestCase):
 class TestBuiltinFunctionExtraction(unittest.TestCase):
     """Tests for builtin_function_or_method extraction."""
 
-    def test_builtin_len(self):
+    def test_builtin_len(self) -> None:
         p = pin(len)
         val = p.xray()
         self.assertEqual(val["__type__"], "builtin_function_or_method")
         self.assertEqual(val["__name__"], "len")
 
-    def test_builtin_print(self):
+    def test_builtin_print(self) -> None:
         p = pin(print)
         val = p.xray()
         self.assertEqual(val["__type__"], "builtin_function_or_method")
         self.assertEqual(val["__name__"], "print")
 
-    def test_builtin_abs(self):
+    def test_builtin_abs(self) -> None:
         p = pin(abs)
         val = p.xray()
         self.assertEqual(val["__type__"], "builtin_function_or_method")
         self.assertEqual(val["__name__"], "abs")
 
-    def test_method_of_list(self):
+    def test_method_of_list(self) -> None:
         lst = [1, 2, 3]
         append_method = lst.append
         p = pin(append_method)
@@ -479,7 +479,7 @@ class TestBuiltinFunctionExtraction(unittest.TestCase):
 class TestGeneratorExtraction(unittest.TestCase):
     """Tests for generator object extraction."""
 
-    def test_generator_basic(self):
+    def test_generator_basic(self) -> None:
         def gen_func():
             yield 1
             yield 2
@@ -492,7 +492,7 @@ class TestGeneratorExtraction(unittest.TestCase):
         # Clean up generator
         gen.close()
 
-    def test_generator_with_values(self):
+    def test_generator_with_values(self) -> None:
         def count_up(n: int):
             for i in range(n):
                 yield i
@@ -507,24 +507,24 @@ class TestGeneratorExtraction(unittest.TestCase):
 class TestEnumerateExtraction(unittest.TestCase):
     """Tests for enumerate object extraction."""
 
-    def test_enumerate_default_start(self):
+    def test_enumerate_default_start(self) -> None:
         e = enumerate([1, 2, 3])
         p = pin(e)
         val = p.xray()
         self.assertEqual(val["__type__"], "enumerate")
         self.assertEqual(val["start_index"], 0)
 
-    def test_enumerate_custom_start(self):
+    def test_enumerate_custom_start(self) -> None:
         e = enumerate([1, 2, 3], start=10)
         p = pin(e)
         val = p.xray()
         self.assertEqual(val["__type__"], "enumerate")
         self.assertEqual(val["start_index"], 10)
 
-    def test_enumerate_after_iteration(self):
+    def test_enumerate_after_iteration(self) -> None:
         e = enumerate(["a", "b", "c"])
-        next(e)  # Consume first element
-        next(e)  # Consume second element
+        _ = next(e)  # Consume first element
+        _ = next(e)  # Consume second element
         p = pin(e)
         val = p.xray()
         self.assertEqual(val["__type__"], "enumerate")
@@ -533,4 +533,4 @@ class TestEnumerateExtraction(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

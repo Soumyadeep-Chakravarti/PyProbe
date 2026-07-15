@@ -1,5 +1,8 @@
+import ctypes
 import os
 from typing import Any, Optional
+
+from pyprobe.utils.Log_engine import PyProbeDiagnostics
 
 # Hook into the singleton engine
 diag = PyProbeDiagnostics()
@@ -20,11 +23,11 @@ def is_readable_ptr(ptr: int | None) -> bool:
             # IsBadReadPtr returns 0 if the process HAS read access.
             if ctypes.windll.kernel32.IsBadReadPtr(ctypes.c_void_p(ptr), 8) != 0:
                 err = Exception("Windows IsBadReadPtr flagged address as protected.")
-                diag.record_fault(err, address=ptr, target_obj=None, critical=critical_check)
+                diag.record_fault(err, address=ptr, target_obj=None, critical=True)
                 return False
         except Exception as e:
             # Catching the rare case where IsBadReadPtr itself fails to execute
-            diag.record_fault(e, address=ptr, target_obj=None, critical=critical_check)
+            diag.record_fault(e, address=ptr, target_obj=None, critical=True)
             return False
 
     # 3. Standard fallback check
@@ -33,7 +36,7 @@ def is_readable_ptr(ptr: int | None) -> bool:
         return True
     except Exception as e:
         # The standard ctypes trial read failed
-        diag.record_fault(e, address=ptr, target_obj=None, critical=critical_check)
+        diag.record_fault(e, address=ptr, target_obj=None, critical=True)
         return False
 
 
@@ -93,7 +96,8 @@ def _discover_list_items_offset() -> int:
 
         if not is_readable_ptr(ob_item_ptr):
             continue
-        assert isinstance(ob_item_ptr, int)
+        if not isinstance(ob_item_ptr, int):
+            continue
 
         try:
             p0 = ctypes.c_void_p.from_address(ob_item_ptr).value
@@ -102,7 +106,7 @@ def _discover_list_items_offset() -> int:
 
             if p0 == expected[0] and p1 == expected[1] and p2 == expected[2]:
                 return offset
-        except Exception:
+        except (OSError, ValueError):
             continue
 
     raise RuntimeError("Could not discover list items offset!")
@@ -148,7 +152,7 @@ def _discover_str_data_offset() -> int:
             raw = ctypes.string_at(s_addr + offset, 4)
             if raw == expected:
                 return offset
-        except Exception:
+        except (OSError, ValueError):
             continue
 
     raise RuntimeError("Could not discover string data offset!")
@@ -192,7 +196,7 @@ def _discover_dict_entry_layout() -> dict[str, int]:
                     ma_keys_offset = offset
                     v1_offset_in_keys = inner
                     break
-            except Exception:
+            except (OSError, ValueError):
                 continue
 
         if ma_keys_ptr is not None:
@@ -200,7 +204,8 @@ def _discover_dict_entry_layout() -> dict[str, int]:
 
     if ma_keys_ptr is None or v1_offset_in_keys is None:
         raise RuntimeError("Could not find ma_keys or v1!")
-    assert isinstance(ma_keys_offset, int)
+    if not isinstance(ma_keys_offset, int):
+        raise RuntimeError("ma_keys_offset discovery failed.")
 
     # Step 2: Find v2 offset inside ma_keys
     v2_offset_in_keys = None
@@ -214,7 +219,7 @@ def _discover_dict_entry_layout() -> dict[str, int]:
             if val == expected_v2:
                 v2_offset_in_keys = inner
                 break
-        except Exception:
+        except (OSError, ValueError):
             continue
 
     if v2_offset_in_keys is None:
@@ -238,16 +243,28 @@ def _fmt_offset(val: Optional[int]) -> str:
 # ──────────────────────────────────────────────────────
 
 print("Testing tuple...")
-TUPLE_ITEMS_OFFSET: int = _discover_tuple_items_offset()
-print(f"Tuple OK: {_fmt_offset(TUPLE_ITEMS_OFFSET)}")
+try:
+    TUPLE_ITEMS_OFFSET: int = _discover_tuple_items_offset()
+    print(f"Tuple OK: {_fmt_offset(TUPLE_ITEMS_OFFSET)}")
+except Exception as e:
+    print(f"Tuple FAILED: {e}")
+    TUPLE_ITEMS_OFFSET = None  # type: ignore[assignment]
 
 print("Testing list...")
-LIST_ITEMS_OFFSET: int = _discover_list_items_offset()
-print(f"List OK: {_fmt_offset(LIST_ITEMS_OFFSET)}")
+try:
+    LIST_ITEMS_OFFSET: int = _discover_list_items_offset()
+    print(f"List OK: {_fmt_offset(LIST_ITEMS_OFFSET)}")
+except Exception as e:
+    print(f"List FAILED: {e}")
+    LIST_ITEMS_OFFSET = None  # type: ignore[assignment]
 
 print("Testing set...")
-SET_ITEMS_OFFSET: int = _discover_set_items_offset()
-print(f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
+try:
+    SET_ITEMS_OFFSET: int = _discover_set_items_offset()
+    print(f"Set OK: {_fmt_offset(SET_ITEMS_OFFSET)}")
+except Exception as e:
+    print(f"Set FAILED: {e}")
+    SET_ITEMS_OFFSET = None  # type: ignore[assignment]
 
 print("Testing dict...")
 try:

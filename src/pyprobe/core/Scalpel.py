@@ -11,18 +11,14 @@ import types
 import gc
 import sys
 from contextlib import contextmanager
-from typing import Tuple, Any
+from typing import Generator, Tuple, Any
 
 from pyprobe.core.offset_discovery import (
-    LIST_ITEMS_OFFSET,
-    DICT_LAYOUT,
     STR_DATA_OFFSET
 )
 
 # Globally cache the memory addresses of Python's small integers at load time
 SMALL_INT_ADDRS = {id(i) for i in range(-5, 257)}
-
-# ── Import from Phase 1 ────────────────────────────────────────────────────
 
 
 # ── Constants ──────────────────────────────────────────────────────────────
@@ -43,7 +39,7 @@ def _get_refcount(addr: int) -> int:
 
 
 @contextmanager
-def gc_suspended():
+def gc_suspended() -> Generator[None, None, None]:
     """Temporarily disable GC during mutation."""
     was_enabled = gc.isenabled()
     if was_enabled:
@@ -224,8 +220,9 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
     list_addr    = id(target_list)
     new_obj_addr = id(new_obj)
 
-    ob_item_ptr      = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
-    assert ob_item_ptr is not None
+    ob_item_ptr = ctypes.c_void_p.from_address(list_addr + LIST_ITEMS_OFFSET).value
+    if ob_item_ptr is None:
+        raise RuntimeError("Could not read ob_item pointer from list.")
     target_slot_addr = ob_item_ptr + (index * 8)
 
     with gc_suspended():
@@ -260,11 +257,13 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
     new_obj_addr = id(new_value)
     old_val_id   = id(target_dict[key])
 
-    assert DICT_LAYOUT is not None
+    if DICT_LAYOUT is None:
+        raise RuntimeError("Dict layout was not discovered.")
     ma_keys_ptr = ctypes.c_void_p.from_address(
         d_addr + DICT_LAYOUT["ma_keys_offset"]
     ).value
-    assert ma_keys_ptr is not None
+    if ma_keys_ptr is None:
+        raise RuntimeError("Could not read ma_keys pointer from dict.")
 
     entry_size  = DICT_LAYOUT["entry_size"]
     scan_limit  = len(target_dict) * entry_size * 4
@@ -280,10 +279,10 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
                     continue
                 target_slot_addr = candidate
                 break
-        except Exception:
+        except (OSError, ValueError):
             pass
 
-    if not target_slot_addr:
+    if target_slot_addr is None:
         raise RuntimeError("Could not locate value pointer in memory.")
 
     with gc_suspended():
@@ -365,7 +364,7 @@ def mutate_str(target_str: str, new_str: str) -> None:
 
 # ── Tests ──────────────────────────────────────────────────────────────────
 
-def run_tests():
+def run_tests() -> None:
     print("=" * 50)
     print("PyProbe Scalpel: Phase 2 Mutation Tests")
     print("=" * 50)

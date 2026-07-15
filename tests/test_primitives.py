@@ -42,4 +42,4 @@ class TestPrimitives(unittest.TestCase):
             self.assertEqual(val, c, f"Failed for bytes: {repr(c)}")
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

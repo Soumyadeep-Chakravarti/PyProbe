@@ -26,7 +26,7 @@ class RefCountTracker:
         self._history.append((time.time(), true_refcnt))
         print(f"[{label}] Address {hex(self._addr)} | Current RefCount: {true_refcnt}")
 
-    def show_delta(self):
+    def show_delta(self) -> None:
         print("\n--- REFCOUNT SNAPSHOT DELTA ---")
         start_time, start_cnt = self._history[0]
         end_time, end_cnt = self._history[-1]
@@ -35,7 +35,7 @@ class RefCountTracker:
         if delta > 0:
             print("ALERT: Possible Reference Leak Detected!")
 
-def test_leak_tracking():
+def test_leak_tracking() -> None:
     # Setup
     print("Initializing Leak Tracker...")
     data: dict[str, object] = {"secret": "data"}

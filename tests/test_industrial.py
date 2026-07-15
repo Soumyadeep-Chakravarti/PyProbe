@@ -17,7 +17,7 @@ def run_test(name: str, obj: object) -> None:
         import traceback
         traceback.print_exc()
 
-def test_industrial():
+def test_industrial() -> None:
     # 1. Dict with tombstones
     d = {i: i for i in range(5)}
     del d[2]
