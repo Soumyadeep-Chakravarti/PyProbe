@@ -3,11 +3,10 @@
 High-speed memory introspection for CPython 3.14.
 """
 
-import builtins
 import ctypes
 import sys
 import warnings
-from typing import Any, Dict, Optional, Set, Tuple, Type, Union, cast
+from typing import Any, Dict, Optional, Tuple, Type, Union, cast
 
 from pyprobe.raw.headers.py_object import PyObjectHeader
 from pyprobe.raw.headers.py_type import PyTypeObject
@@ -26,15 +25,10 @@ from pyprobe.core.offset_discovery import (
     LIST_ITEMS_OFFSET,
     DICT_MA_KEYS_OFFSET,
 )
-
-# Type aliases
-VisitedSet = Set[int]
-
-# PyObject_HEAD
-HEADER_SIZE = 16
-
-# PyVarObject_HEAD
-VAR_HEADER_SIZE = 24
+from pyprobe.core.pointer.common import (
+    VisitedSet, HEADER_SIZE, VAR_HEADER_SIZE,
+    EXCEPTION_NAMES, TYPE_NAME_CACHE, UNSET,
+)
 
 # Industrial Singleton Discovery
 _dummy_ptr_cache: Optional[int] = None
@@ -85,26 +79,11 @@ def _get_dummy_ptr() -> Optional[int]:
 if ctypes.sizeof(ctypes.c_void_p) != 8:
     raise RuntimeError("PyProbe currently only supports 64-bit CPython architectures.")
 
-# Pre-compute the set of all builtin exception type names for dynamic matching
-_EXCEPTION_NAMES: set[str] = set()
-for _name in dir(builtins):
-    _obj = getattr(builtins, _name, None)
-    if isinstance(_obj, type) and issubclass(_obj, BaseException):
-        _EXCEPTION_NAMES.add(_name)
-
-# Cached lookups for performance
-_TYPE_NAME_CACHE: Dict[int, str] = {}
-
-
-# Sentinel value for unset target parameter
-_UNSET = object()
-
-
 class Pointer:
     """Memory introspection pointer for CPython objects."""
 
-    def __init__(self, target: Any = _UNSET, *, address: Optional[int] = None) -> None:
-        has_target = target is not _UNSET
+    def __init__(self, target: Any = UNSET, *, address: Optional[int] = None) -> None:
+        has_target = target is not UNSET
         has_address = address is not None
 
         if has_target and has_address:
@@ -270,16 +249,16 @@ class Pointer:
 
     def _get_type_name(self, type_addr: int) -> str:
         """Cache type name lookup."""
-        if type_addr not in _TYPE_NAME_CACHE:
+        if type_addr not in TYPE_NAME_CACHE:
             try:
                 type_struct = PyTypeObject.from_address(type_addr)
                 if not type_struct.tp_name:
                     return f"<Uninitialized Type @ {hex(type_addr)}>"
                 operator = type_struct.tp_name
-                _TYPE_NAME_CACHE[type_addr] = operator.decode("utf-8")
+                TYPE_NAME_CACHE[type_addr] = operator.decode("utf-8")
             except Exception:
                 return f"<Invalid Type @ {hex(type_addr)}>"
-        return _TYPE_NAME_CACHE[type_addr]
+        return TYPE_NAME_CACHE[type_addr]
 
     def _get_type_info(self, addr: int) -> Tuple[Optional[PyObjectHeader], str]:
         """Extract header and cached type name from address with safety."""
@@ -678,7 +657,7 @@ class Pointer:
                 "slice", "function", "module", "cell", "property",
                 "staticmethod", "classmethod", "generator", "enumerate",
             ]
-            is_exception = type_name in _EXCEPTION_NAMES
+            is_exception = type_name in EXCEPTION_NAMES
             if is_container or is_exception:
                 visited.add(actual_addr)
 
