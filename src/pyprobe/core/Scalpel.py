@@ -5,21 +5,19 @@ Phase 2: Controlled memory mutation with strict safety guarantees.
 Dynamically maps memory layouts to survive CPython version changes.
 Includes CPython 3.12+ PyLongObject bitfield fixes.
 """
-import os 
+
+import ctypes
+import types
+import gc
 import sys
+from contextlib import contextmanager
+from typing import Tuple, Any
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.abspath(os.path.join(current_dir, '..', '..'))
-if src_dir not in sys.path:
-    sys.path.insert(0, src_dir)
-
-import ctypes # noqa: E402
-import types # noqa: E402
-import gc # noqa: E402
-
-from contextlib import contextmanager # noqa: E402
-from typing import Tuple, Any # noqa: E402
-
+from pyprobe.core.offset_discovery import (
+    LIST_ITEMS_OFFSET,
+    DICT_LAYOUT,
+    STR_DATA_OFFSET
+)
 
 # Globally cache the memory addresses of Python's small integers at load time
 SMALL_INT_ADDRS = {id(i) for i in range(-5, 257)}
@@ -336,8 +334,6 @@ def mutate_str(target_str: str, new_str: str) -> None:
     non-interned Compact ASCII string in memory.
     Uses Phase 1 dynamic offset discovery.
     """
-
-    from pyprobe.core.offset_discovery import STR_DATA_OFFSET
     assert_safe(target_str, stack_depth=5)
     if len(target_str) != len(new_str):
         raise ValueError("Length mismatch: cannot resize allocated string object.")

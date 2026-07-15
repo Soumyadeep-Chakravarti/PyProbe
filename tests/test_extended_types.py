@@ -165,9 +165,7 @@ class TestFunctionExtraction(unittest.TestCase):
         self.assertEqual(val["__doc__"], "This is the docstring.")
 
     def test_lambda(self):
-        def f(x: int) -> int:
-            return x * 2
-            
+        f: Callable[[int], int] = lambda x: x * 2
         p = pin(f)
         val = p.xray()
         self.assertEqual(val["__type__"], "function")

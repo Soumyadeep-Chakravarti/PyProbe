@@ -138,18 +138,18 @@ def test_address_never_changes():
 
     # Verify Addresses
     print(f"  Integer base address : {hex(i_addr)}")
-    print("  Integer static?      : ✅ YES")
+    print(f"  Integer static?      : ✅ YES")
     print(f"  List base address    : {hex(lst_addr)}")
-    print("  List base static?    : ✅ YES")
+    print(f"  List base static?    : ✅ YES")
     if ob_item_ptr is None:
         raise RuntimeError("Could not locate list storage pointer.")
     ob_item_ptr_addr: int = ob_item_ptr
     print(f"  List ob_item ptr     : {hex(ob_item_ptr_addr)}")
-    print("  List ob_item static? : ✅ YES")
+    print(f"  List ob_item static? : ✅ YES")
     print(f"  Bytes base address   : {hex(b_addr)}")
-    print("  Bytes static?        : ✅ YES")
+    print(f"  Bytes static?        : ✅ YES")
     print(f"  String base address  : {hex(s_addr)}")
-    print("  String static?       : ✅ YES\n")
+    print(f"  String static?       : ✅ YES\n")
 
     print("  --- DIRECT RAM READ VERIFICATION ---")
     raw_i = ctypes.cast(i_addr, ctypes.py_object).value

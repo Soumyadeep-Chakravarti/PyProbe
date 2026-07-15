@@ -26,6 +26,10 @@ from pyprobe.raw.lenses.tuple_lens import TupleLens
 VisitedSet = set[int]
 ExtractorFunc = Any  # Callable to extractor method
 
+# Type aliases
+VisitedSet = set[int]
+ExtractorFunc = Any  # Callable to extractor method
+
 # PyObject_HEAD
 HEADER_SIZE = 16
 
@@ -48,7 +52,6 @@ def _get_dummy_ptr() -> Optional[int]:
         could not be located (with a warning).
     """
     global _dummy_ptr_cache
-    from pyprobe.core.offset_discovery import DICT_MA_KEYS_OFFSET
     if _dummy_ptr_cache is None:
         try:
             d = {0: 0}

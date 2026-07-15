@@ -1,32 +1,16 @@
 import os
-import sys
-import ctypes
-from typing import Any,Optional
-
-# --- THE PATH HACK (Bringing it back) ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.abspath(os.path.join(current_dir, '..', '..'))
-if src_dir not in sys.path:
-    sys.path.insert(0, src_dir)
-# ----------------------------------------
-
-from pyprobe.utils.Log_engine import PyProbeDiagnostics # noqa: E402
+from typing import Any, Optional
 
 # Hook into the singleton engine
 diag = PyProbeDiagnostics()
 
-
-
-def is_readable_ptr(ptr: int | None, critical_check: bool = False) -> bool:
+def is_readable_ptr(ptr: int | None) -> bool:
     """
     Check if pointer is readable without causing a hard OS-level crash.
     """
     # 1. Filter out obvious non-pointers (like small integers such as ob_size=3).
     # Any address below 64KB (0x10000) is universally unmapped in modern OSs.
     if not isinstance(ptr, int) or ptr < 0x10000:
-        err = Exception("Address below 64KB threshold or invalid type.")
-        # ptr might be None, so default to 0 for the log if it is
-        diag.record_fault(err, address=(ptr if isinstance(ptr, int) else 0), target_obj=None, critical=critical_check)
         return False
 
     # 2. On Windows, dereferencing invalid high memory STILL causes an Access
