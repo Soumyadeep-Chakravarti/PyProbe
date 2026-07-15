@@ -1,7 +1,8 @@
-import ctypes
 import os
 from typing import Any, Optional
 
+# Hook into the singleton engine
+diag = PyProbeDiagnostics()
 
 def is_readable_ptr(ptr: int | None) -> bool:
     """
@@ -18,15 +19,21 @@ def is_readable_ptr(ptr: int | None) -> bool:
         try:
             # IsBadReadPtr returns 0 if the process HAS read access.
             if ctypes.windll.kernel32.IsBadReadPtr(ctypes.c_void_p(ptr), 8) != 0:
+                err = Exception("Windows IsBadReadPtr flagged address as protected.")
+                diag.record_fault(err, address=ptr, target_obj=None, critical=critical_check)
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            # Catching the rare case where IsBadReadPtr itself fails to execute
+            diag.record_fault(e, address=ptr, target_obj=None, critical=critical_check)
+            return False
 
     # 3. Standard fallback check
     try:
         ctypes.c_void_p.from_address(ptr).value
         return True
-    except Exception:
+    except Exception as e:
+        # The standard ctypes trial read failed
+        diag.record_fault(e, address=ptr, target_obj=None, critical=critical_check)
         return False
 
 

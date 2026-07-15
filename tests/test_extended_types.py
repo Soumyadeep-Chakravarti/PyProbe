@@ -169,8 +169,7 @@ class TestFunctionExtraction(unittest.TestCase):
         p = pin(f)
         val = p.xray()
         self.assertEqual(val["__type__"], "function")
-        self.assertEqual(val["__name__"], "<lambda>")
-
+        self.assertEqual(val["__name__"], "f")
 
 class TestTypeExtraction(unittest.TestCase):
     """Tests for type object extraction."""

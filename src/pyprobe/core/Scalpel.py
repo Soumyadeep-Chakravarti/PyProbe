@@ -216,6 +216,7 @@ def safe_list_swap(target_list: list[Any], index: int, new_obj: Any) -> None:
         list_addr + LIST_ITEMS_OFFSET → ob_item pointer
         ob_item + (index * 8)         → slot to swap
     """
+    from pyprobe.core.offset_discovery import LIST_ITEMS_OFFSET
     assert_safe(target_list, stack_depth=5)
     if index < 0 or index >= len(target_list):
         raise IndexError("List index out of range")
@@ -250,6 +251,7 @@ def safe_dict_value_swap(target_dict: dict[Any, Any], key: Any, new_value: Any) 
         dict_addr + ma_keys_offset → ma_keys pointer
         scan ma_keys for old_val_id → target slot
     """
+    from pyprobe.core.offset_discovery import DICT_LAYOUT 
     assert_safe(target_dict, stack_depth=5)
     if key not in target_dict:
         raise KeyError(f"Key '{key}' not found.")
